@@ -1,0 +1,270 @@
+"""VEC-001: vector and embedding data stores.
+
+Lane discipline: general IaC scanners already flag every unencrypted RDS
+instance on the internet. modelmoat only speaks up when the data store is
+plausibly holding AI data, and its messages never claim more than the
+configuration proves:
+
+  OpenSearch domains       always in scope (the managed vector engine)
+  RDS instances/clusters   in scope when the engine is Postgres-family
+                           (pgvector capable) or the name/tags are AI-related
+  ElastiCache              in scope only when the name/tags are AI-related
+
+Explicitly disabled settings (enabled = false) are treated exactly like
+missing ones, and values that come from variables are unknown and never
+flagged.
+"""
+
+from __future__ import annotations
+
+from ..graph import (
+    ProjectGraph,
+    Resource,
+    ai_tokens_in,
+    as_list,
+    first_block,
+    missing_or_false,
+    truthy,
+)
+from ..policy import allows_public_principal, parse_policy_document
+from ..scanner import Finding
+
+
+class VectorDataStoreCheck:
+    check_id = "VEC-001"
+    check_name = "Vector Data Store Missing Security Controls"
+
+    def run(self, graph: ProjectGraph) -> list[Finding]:
+        findings: list[Finding] = []
+        findings.extend(self._opensearch(graph))
+        findings.extend(self._rds(graph))
+        findings.extend(self._elasticache(graph))
+        return findings
+
+    # ------------------------------------------------------------------ #
+    # OpenSearch                                                          #
+    # ------------------------------------------------------------------ #
+    def _opensearch(self, graph: ProjectGraph) -> list[Finding]:
+        findings: list[Finding] = []
+
+        for domain in graph.by_type("aws_opensearch_domain", "aws_elasticsearch_domain"):
+            at_rest = first_block(domain.config, "encrypt_at_rest")
+            if at_rest is None or missing_or_false(at_rest.get("enabled")):
+                state = "explicitly disables" if at_rest is not None else "does not enable"
+                findings.append(
+                    self._finding(
+                        domain,
+                        "HIGH",
+                        f"OpenSearch domain '{domain.name}' {state} encryption at "
+                        "rest. Indexed documents and vector embeddings sit "
+                        "unencrypted on disk.",
+                        "Set encrypt_at_rest { enabled = true }, ideally with a "
+                        "customer managed KMS key.",
+                        "https://docs.aws.amazon.com/opensearch-service/latest/"
+                        "developerguide/encryption-at-rest.html",
+                    )
+                )
+
+            node_to_node = first_block(domain.config, "node_to_node_encryption")
+            if node_to_node is None or missing_or_false(node_to_node.get("enabled")):
+                findings.append(
+                    self._finding(
+                        domain,
+                        "MEDIUM",
+                        f"OpenSearch domain '{domain.name}' lacks node-to-node "
+                        "encryption, so traffic between cluster nodes travels in "
+                        "plaintext.",
+                        "Set node_to_node_encryption { enabled = true }.",
+                        "https://docs.aws.amazon.com/opensearch-service/latest/"
+                        "developerguide/ntn.html",
+                    )
+                )
+
+            vpc_options = first_block(domain.config, "vpc_options")
+            if vpc_options is None:
+                access_doc = parse_policy_document(domain.config.get("access_policies"))
+                if access_doc is not None and allows_public_principal(access_doc):
+                    findings.append(
+                        self._finding(
+                            domain,
+                            "CRITICAL",
+                            f"OpenSearch domain '{domain.name}' has no vpc_options and "
+                            'its access policy allows Principal "*". The domain '
+                            "endpoint is reachable from the internet with no IAM "
+                            "restriction, which is how vector databases end up in "
+                            "breach write-ups.",
+                            "Move the domain into a VPC with vpc_options, or at "
+                            "minimum restrict the access policy to specific "
+                            "principals and source conditions.",
+                            "https://docs.aws.amazon.com/opensearch-service/latest/"
+                            "developerguide/vpc.html",
+                        )
+                    )
+                else:
+                    findings.append(
+                        self._finding(
+                            domain,
+                            "HIGH",
+                            f"OpenSearch domain '{domain.name}' has no vpc_options, so "
+                            "its endpoint resolves publicly and reachability is "
+                            "governed only by the access policy and fine-grained "
+                            "access control.",
+                            "Add vpc_options with subnet_ids and security_group_ids "
+                            "so the domain is only reachable from your network.",
+                            "https://docs.aws.amazon.com/opensearch-service/latest/"
+                            "developerguide/vpc.html",
+                        )
+                    )
+            elif not as_list(vpc_options.get("security_group_ids")):
+                findings.append(
+                    self._finding(
+                        domain,
+                        "LOW",
+                        f"OpenSearch domain '{domain.name}' is in a VPC but sets no "
+                        "security_group_ids, so it silently uses the VPC default "
+                        "security group.",
+                        "Set security_group_ids explicitly and restrict ingress on "
+                        "443 to the application tiers that query the domain.",
+                        "https://docs.aws.amazon.com/opensearch-service/latest/"
+                        "developerguide/vpc.html",
+                    )
+                )
+
+        return findings
+
+    # ------------------------------------------------------------------ #
+    # RDS / Aurora (pgvector)                                             #
+    # ------------------------------------------------------------------ #
+    def _rds(self, graph: ProjectGraph) -> list[Finding]:
+        findings: list[Finding] = []
+
+        instances = graph.by_type("aws_db_instance", "aws_rds_cluster_instance")
+        clusters = graph.by_type("aws_rds_cluster")
+
+        for db in instances + clusters:
+            engine = str(db.config.get("engine", "")).lower()
+            postgres = "postgres" in engine
+            names = " ".join(
+                str(db.config.get(key, ""))
+                for key in ("identifier", "cluster_identifier", "db_name", "name")
+            )
+            tags = db.config.get("tags") or {}
+            tag_values = [str(v) for v in tags.values()] if isinstance(tags, dict) else []
+            relevant = postgres or ai_tokens_in(db.name, names, *tag_values)
+            if not relevant:
+                continue
+
+            data_note = (
+                "a pgvector-capable Postgres database"
+                if postgres
+                else "a database whose name or tags look AI related"
+            )
+
+            if truthy(db.config.get("publicly_accessible")):
+                findings.append(
+                    self._finding(
+                        db,
+                        "CRITICAL",
+                        f"'{db.name}' sets publicly_accessible = true on {data_note}. "
+                        "The instance gets a public IP and is reachable from the "
+                        "internet, guarded only by security groups and database "
+                        "credentials.",
+                        "Set publicly_accessible = false and place the database in "
+                        "private subnets. Reach it through VPC-connected "
+                        "applications or a bastion.",
+                        "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/"
+                        "USER_VPC.html",
+                    )
+                )
+
+            # storage_encrypted lives on aws_db_instance and aws_rds_cluster,
+            # not on cluster instances, which inherit it.
+            if db.type != "aws_rds_cluster_instance" and missing_or_false(
+                db.config.get("storage_encrypted")
+            ):
+                findings.append(
+                    self._finding(
+                        db,
+                        "HIGH",
+                        f"'{db.name}' does not enable storage_encrypted on "
+                        f"{data_note}. Embeddings and their source text would sit "
+                        "unencrypted at rest, and encryption cannot be enabled "
+                        "in place later.",
+                        "Set storage_encrypted = true, optionally with kms_key_id "
+                        "for a customer managed key.",
+                        "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/"
+                        "Overview.Encryption.html",
+                    )
+                )
+
+        return findings
+
+    # ------------------------------------------------------------------ #
+    # ElastiCache (Redis as a vector or embedding cache)                  #
+    # ------------------------------------------------------------------ #
+    def _elasticache(self, graph: ProjectGraph) -> list[Finding]:
+        findings: list[Finding] = []
+
+        caches = graph.by_type(
+            "aws_elasticache_replication_group", "aws_elasticache_cluster"
+        )
+        for cache in caches:
+            names = " ".join(
+                str(cache.config.get(key, ""))
+                for key in ("replication_group_id", "cluster_id", "description")
+            )
+            tags = cache.config.get("tags") or {}
+            tag_values = [str(v) for v in tags.values()] if isinstance(tags, dict) else []
+            if not ai_tokens_in(cache.name, names, *tag_values):
+                continue
+
+            if missing_or_false(cache.config.get("transit_encryption_enabled")):
+                findings.append(
+                    self._finding(
+                        cache,
+                        "HIGH",
+                        f"ElastiCache '{cache.name}' looks AI related but does not "
+                        "enable transit encryption, so embeddings and cached "
+                        "completions cross the network in plaintext.",
+                        "Set transit_encryption_enabled = true and require an "
+                        "auth_token or RBAC users.",
+                        "https://docs.aws.amazon.com/AmazonElastiCache/latest/"
+                        "red-ug/in-transit-encryption.html",
+                    )
+                )
+
+            if missing_or_false(cache.config.get("at_rest_encryption_enabled")):
+                findings.append(
+                    self._finding(
+                        cache,
+                        "MEDIUM",
+                        f"ElastiCache '{cache.name}' looks AI related but does not "
+                        "enable at-rest encryption.",
+                        "Set at_rest_encryption_enabled = true.",
+                        "https://docs.aws.amazon.com/AmazonElastiCache/latest/"
+                        "red-ug/at-rest-encryption.html",
+                    )
+                )
+
+        return findings
+
+    def _finding(
+        self,
+        resource: Resource,
+        severity: str,
+        message: str,
+        remediation: str,
+        docs_url: str,
+    ) -> Finding:
+        return Finding(
+            check_id=self.check_id,
+            check_name=self.check_name,
+            severity=severity,
+            resource_type=resource.type,
+            resource_name=resource.name,
+            file_path=str(resource.file),
+            line=resource.line,
+            message=message,
+            remediation=remediation,
+            docs_url=docs_url,
+        )

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "modelmoat"
+version = "0.1.0"
+description = "Static analysis for AI infrastructure security in Terraform. Finds misconfigured SageMaker, Bedrock IAM, model artifact buckets, missing PrivateLink, and exposed vector databases before they deploy."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "modelmoat contributors" }]
+keywords = ["terraform", "security", "static-analysis", "ai-security", "sagemaker", "bedrock", "iac"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security",
+]
+dependencies = [
+  "python-hcl2>=8.0,<9",
+  "rich>=13.0",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+modelmoat = "modelmoat.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/REPLACE_ME/modelmoat"
+Issues = "https://github.com/REPLACE_ME/modelmoat/issues"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
