@@ -1,8 +1,15 @@
 # modelmoat
 
-<!-- Banner goes here. Use an absolute GitHub raw URL (not a relative path) so it
-     also renders on the PyPI project page, e.g.:
-     ![modelmoat](https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/banner.png) -->
+<!-- Banner goes here, e.g.: ![modelmoat](assets/banner.png)
+
+   NOTE: the repo is currently private, so this file uses relative image paths
+   (they render on GitHub for anyone with repo access; absolute URLs don't,
+   since GitHub's image proxy can't fetch private content even for the owner).
+   Before making the repo public or publishing a new PyPI version, switch the
+   banner and screenshot image paths below to absolute GitHub raw URLs, e.g.:
+   https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/banner.png
+   Relative paths render fine on GitHub but show as broken images on PyPI,
+   which has no access to the rest of the repo tree. -->
 
 Static analysis for AI infrastructure security in Terraform. It reads your `.tf`
 files and finds the misconfigurations that show up specifically when teams ship
@@ -10,7 +17,7 @@ Bedrock, SageMaker, and vector databases: blanket `bedrock:*` grants, model
 artifact buckets open to the internet, embedding stores without encryption, and
 inference traffic that never touches your private network.
 
-![modelmoat scanning insecure Terraform and reporting CRITICAL and HIGH findings](https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/screenshots/scan-insecure.svg)
+![modelmoat scanning insecure Terraform and reporting CRITICAL and HIGH findings](assets/screenshots/scan-insecure.svg)
 
 General IaC scanners check hundreds of AWS resource types and cover some of this
 ground. modelmoat is the one that treats AI infrastructure as its own category,
@@ -119,7 +126,7 @@ ignore it, so CI runs both directions on every push, requiring a clean pass on
 nine files of best-practice Terraform and a failing exit code on the insecure
 fixture.
 
-![modelmoat scanning correctly configured Terraform and reporting zero findings](https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/screenshots/scan-secure.svg)
+![modelmoat scanning correctly configured Terraform and reporting zero findings](assets/screenshots/scan-secure.svg)
 
 ## Limitations
 
