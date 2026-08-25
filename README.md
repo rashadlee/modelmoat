@@ -37,7 +37,7 @@ Real output from the test fixtures in this repo:
 
 ```
 modelmoat 0.1.0 scanned 6 Terraform file(s)
-  CRITICAL: 4  HIGH: 7  MEDIUM: 0  LOW: 0
+  CRITICAL: 4  HIGH: 7  MEDIUM: 4  LOW: 3
 
 CRITICAL S3-001  aws_s3_bucket.datasets
          tests/fixtures/insecure/s3_bad.tf:11
