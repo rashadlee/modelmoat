@@ -76,6 +76,7 @@ class AIVPCEndpointCheck:
                                 "and allow the Lambda security group to reach it on 443."
                             ),
                             docs_url=_DOCS,
+                            detail=service,
                         )
                     )
                 elif not in_vpc:
@@ -102,6 +103,7 @@ class AIVPCEndpointCheck:
                                 f'"com.amazonaws.<region>{fragment}".'
                             ),
                             docs_url=_DOCS,
+                            detail=service,
                         )
                     )
 

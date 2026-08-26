@@ -10,6 +10,7 @@ import typer
 from rich.console import Console
 
 from . import __version__
+from .baseline import BaselineError, apply_baseline, load_baseline, write_baseline
 from .checks import ALL_CHECKS
 from .sarif import to_sarif_json
 from .scanner import SEVERITIES, SEVERITY_RANK, Scanner
@@ -99,16 +100,77 @@ def scan(
             "Set to CRITICAL to loosen, LOW to tighten.",
         ),
     ] = "HIGH",
+    baseline: Annotated[
+        Path | None,
+        typer.Option(
+            "--baseline",
+            help="Suppress findings recorded in this baseline file.",
+        ),
+    ] = None,
+    write_baseline_to: Annotated[
+        Path | None,
+        typer.Option(
+            "--write-baseline",
+            help="Record current findings to this file and exit 0.",
+        ),
+    ] = None,
 ) -> None:
     """Scan Terraform for AI infrastructure security issues."""
     if json_out and sarif_out:
         error_console.print("[red]--json and --sarif are mutually exclusive[/red]")
         raise typer.Exit(code=2)
 
+    if baseline is not None and write_baseline_to is not None:
+        error_console.print(
+            "[red]--baseline and --write-baseline are mutually exclusive[/red]"
+        )
+        raise typer.Exit(code=2)
+
     min_severity = _validate_severity(min_severity, "--min-severity")
     fail_on = _validate_severity(fail_on, "--fail-on")
 
     result = Scanner(ALL_CHECKS).scan(paths)
+
+    # Writing a baseline is an adoption step, not a verdict. It exits 0 even
+    # when findings exist, so turning the tool on does not break the build in
+    # the same run.
+    if write_baseline_to is not None:
+        try:
+            write_baseline(write_baseline_to, result.findings)
+        except OSError as exc:
+            error_console.print(f"[red]could not write baseline: {exc}[/red]")
+            raise typer.Exit(code=2) from exc
+        console.print()
+        console.print(
+            f"Recorded [bold]{len(result.findings)}[/bold] finding(s) to "
+            f"{write_baseline_to}"
+        )
+        console.print(
+            "[dim]Scans with --baseline will report only findings added after "
+            "this point.[/dim]"
+        )
+        raise typer.Exit(code=0)
+
+    comparison = None
+    if baseline is not None:
+        try:
+            entries = load_baseline(baseline)
+        except BaselineError as exc:
+            error_console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2) from exc
+        comparison = apply_baseline(result.findings, entries)
+        result.findings = comparison.active
+
+        # A suppressed finding that got worse is the one case where a baseline
+        # could hide something that now matters. Warn on stderr so it survives
+        # --json and --sarif too.
+        for finding, was in comparison.escalated:
+            error_console.print(
+                f"[yellow]warning:[/yellow] {finding.check_id} on "
+                f"{finding.resource_type}.{finding.resource_name} is now "
+                f"{finding.severity}, was {was} when the baseline was written."
+            )
+
     exit_code = 1 if result.max_rank() >= SEVERITY_RANK[fail_on] else 0
 
     minimum = SEVERITY_RANK[min_severity]
@@ -137,6 +199,17 @@ def scan(
         f"[yellow]MEDIUM:[/yellow] {result.count('MEDIUM')}  "
         f"[blue]LOW:[/blue] {result.count('LOW')}"
     )
+
+    if comparison is not None:
+        console.print(
+            f"  [dim]{len(comparison.suppressed)} suppressed by baseline[/dim]"
+        )
+        if comparison.stale:
+            console.print(
+                f"  [dim]{len(comparison.stale)} baseline entr"
+                f"{'y' if len(comparison.stale) == 1 else 'ies'} no longer match "
+                f"anything and can be pruned[/dim]"
+            )
 
     for parse_error in result.parse_errors:
         error_console.print(

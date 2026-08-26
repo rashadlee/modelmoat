@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Iterable
 from pathlib import Path
@@ -36,22 +35,6 @@ _SECURITY_SEVERITY = {
     "MEDIUM": "4.0",
     "LOW": "1.0",
 }
-
-
-def _fingerprint(finding: Finding) -> str:
-    """Stable identity for a finding, deliberately excluding the line number.
-
-    Consumers use partialFingerprints to match an alert across commits. Editing
-    lines above a finding moves its line number without changing the finding, so
-    the resource identity is hashed instead.
-    """
-    parts = (
-        finding.check_id,
-        Path(finding.file_path).as_posix(),
-        finding.resource_type,
-        finding.resource_name,
-    )
-    return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
 
 def _build_rules(
@@ -140,7 +123,7 @@ def to_sarif(result: ScanResult, checks: Iterable[Check] | None = None) -> dict:
                         }
                     }
                 ],
-                "partialFingerprints": {"modelmoatFindingV1": _fingerprint(finding)},
+                "partialFingerprints": {"modelmoatFindingV1": finding.fingerprint},
                 "properties": {
                     "severity": finding.severity,
                     "security-severity": _SECURITY_SEVERITY[finding.severity],

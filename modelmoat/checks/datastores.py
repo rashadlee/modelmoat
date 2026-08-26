@@ -62,6 +62,7 @@ class VectorDataStoreCheck:
                         "customer managed KMS key.",
                         "https://docs.aws.amazon.com/opensearch-service/latest/"
                         "developerguide/encryption-at-rest.html",
+                        detail="encryption_at_rest",
                     )
                 )
 
@@ -77,6 +78,7 @@ class VectorDataStoreCheck:
                         "Set node_to_node_encryption { enabled = true }.",
                         "https://docs.aws.amazon.com/opensearch-service/latest/"
                         "developerguide/ntn.html",
+                        detail="node_to_node_encryption",
                     )
                 )
 
@@ -98,6 +100,7 @@ class VectorDataStoreCheck:
                             "principals and source conditions.",
                             "https://docs.aws.amazon.com/opensearch-service/latest/"
                             "developerguide/vpc.html",
+                            detail="public_access_policy",
                         )
                     )
                 else:
@@ -113,6 +116,7 @@ class VectorDataStoreCheck:
                             "so the domain is only reachable from your network.",
                             "https://docs.aws.amazon.com/opensearch-service/latest/"
                             "developerguide/vpc.html",
+                            detail="no_vpc_options",
                         )
                     )
             elif not as_list(vpc_options.get("security_group_ids")):
@@ -127,6 +131,7 @@ class VectorDataStoreCheck:
                         "443 to the application tiers that query the domain.",
                         "https://docs.aws.amazon.com/opensearch-service/latest/"
                         "developerguide/vpc.html",
+                        detail="default_security_group",
                     )
                 )
 
@@ -174,6 +179,7 @@ class VectorDataStoreCheck:
                         "applications or a bastion.",
                         "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/"
                         "USER_VPC.html",
+                        detail="publicly_accessible",
                     )
                 )
 
@@ -194,6 +200,7 @@ class VectorDataStoreCheck:
                         "for a customer managed key.",
                         "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/"
                         "Overview.Encryption.html",
+                        detail="storage_encrypted",
                     )
                 )
 
@@ -230,6 +237,7 @@ class VectorDataStoreCheck:
                         "auth_token or RBAC users.",
                         "https://docs.aws.amazon.com/AmazonElastiCache/latest/"
                         "red-ug/in-transit-encryption.html",
+                        detail="transit_encryption",
                     )
                 )
 
@@ -243,6 +251,7 @@ class VectorDataStoreCheck:
                         "Set at_rest_encryption_enabled = true.",
                         "https://docs.aws.amazon.com/AmazonElastiCache/latest/"
                         "red-ug/at-rest-encryption.html",
+                        detail="at_rest_encryption",
                     )
                 )
 
@@ -255,7 +264,11 @@ class VectorDataStoreCheck:
         message: str,
         remediation: str,
         docs_url: str,
+        detail: str,
     ) -> Finding:
+        # detail has no default on purpose. This check reports several problems
+        # against one resource, and two of them sharing a detail would make them
+        # share a fingerprint, so baselining the mildest would hide the worst.
         return Finding(
             check_id=self.check_id,
             check_name=self.check_name,
@@ -267,4 +280,5 @@ class VectorDataStoreCheck:
             message=message,
             remediation=remediation,
             docs_url=docs_url,
+            detail=detail,
         )

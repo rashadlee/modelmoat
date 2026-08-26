@@ -16,6 +16,12 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from modelmoat.baseline import (
+    BaselineError,
+    apply_baseline,
+    load_baseline,
+    write_baseline,
+)
 from modelmoat.checks import ALL_CHECKS
 from modelmoat.cli import app
 from modelmoat.graph import ai_tokens_in, unquote
@@ -24,7 +30,7 @@ from modelmoat.policy import (
     risky_managed_policy,
     wildcard_ai_grants,
 )
-from modelmoat.sarif import _fingerprint, to_sarif
+from modelmoat.sarif import to_sarif
 from modelmoat.scanner import Finding, Scanner
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -283,11 +289,29 @@ def test_sarif_on_secure_fixture_has_zero_results():
     assert run["results"] == []
 
 
-def test_sarif_fingerprint_survives_line_movement():
-    # Editing lines above a finding must not orphan its alert history.
-    assert _fingerprint(_finding()) == _fingerprint(_finding(line=99))
-    assert _fingerprint(_finding()) != _fingerprint(_finding(resource_name="other"))
-    assert _fingerprint(_finding()) != _fingerprint(_finding(file_path="other.tf"))
+def test_fingerprints_are_unique_across_a_scan():
+    # Two findings sharing a fingerprint is a silent security hole: baselining
+    # the mildest would suppress the worst, and SARIF consumers dedupe on it.
+    # This caught VEC-001 reporting three separate problems against one
+    # OpenSearch domain under a single identity.
+    findings = scan(INSECURE).findings
+    seen: dict[str, str] = {}
+    for finding in findings:
+        label = f"{finding.severity} {finding.check_id} {finding.message[:60]}"
+        clash = seen.get(finding.fingerprint)
+        assert clash is None, f"fingerprint collision:\n  {clash}\n  {label}"
+        seen[finding.fingerprint] = label
+    assert len(seen) == len(findings)
+
+
+def test_fingerprint_survives_line_and_wording_changes():
+    # Editing lines above a finding, or rewording the message, must not orphan
+    # its alert history or silently drop it out of a baseline.
+    assert _finding().fingerprint == _finding(line=99).fingerprint
+    assert _finding().fingerprint == _finding(message="reworded").fingerprint
+    assert _finding().fingerprint != _finding(resource_name="other").fingerprint
+    assert _finding().fingerprint != _finding(file_path="other.tf").fingerprint
+    assert _finding().fingerprint != _finding(check_id="VEC-001").fingerprint
 
 
 def test_cli_sarif_matches_json_exit_codes_and_emits_valid_json():
@@ -305,4 +329,148 @@ def test_cli_sarif_matches_json_exit_codes_and_emits_valid_json():
 def test_cli_rejects_json_and_sarif_together():
     runner = CliRunner()
     both = runner.invoke(app, ["scan", str(SECURE), "--json", "--sarif"])
+    assert both.exit_code == 2
+
+
+# --------------------------------------------------------------------- #
+# Baselines                                                             #
+# --------------------------------------------------------------------- #
+def test_baseline_roundtrip_suppresses_everything_it_recorded(tmp_path):
+    findings = scan(INSECURE).findings
+    path = tmp_path / "baseline.json"
+    write_baseline(path, findings)
+
+    comparison = apply_baseline(findings, load_baseline(path))
+    assert comparison.active == []
+    assert len(comparison.suppressed) == len(findings)
+    assert comparison.stale == []
+
+
+def test_baseline_does_not_suppress_a_finding_it_never_recorded(tmp_path):
+    findings = scan(INSECURE).findings
+    assert len(findings) > 1
+    path = tmp_path / "baseline.json"
+    # Record everything except the first finding.
+    write_baseline(path, findings[1:])
+
+    comparison = apply_baseline(findings, load_baseline(path))
+    assert comparison.active == [findings[0]]
+
+
+def test_baseline_is_readable_rather_than_opaque_hashes(tmp_path):
+    # A baseline is a list of accepted risk. It has to be reviewable in a pull
+    # request, so each entry names the check and the resource.
+    path = tmp_path / "baseline.json"
+    write_baseline(path, scan(INSECURE).findings)
+
+    payload = json.loads(path.read_text())
+    assert payload["tool"] == "modelmoat"
+    entry = payload["findings"][0]
+    assert set(entry) == {
+        "fingerprint",
+        "check_id",
+        "severity",
+        "resource",
+        "file_path",
+    }
+
+
+def test_baseline_reports_stale_entries(tmp_path):
+    path = tmp_path / "baseline.json"
+    write_baseline(path, scan(INSECURE).findings)
+
+    # Nothing in the insecure baseline matches the secure fixture, so every
+    # entry is stale and prunable.
+    comparison = apply_baseline(scan(SECURE).findings, load_baseline(path))
+    assert comparison.active == []
+    assert comparison.suppressed == []
+    assert len(comparison.stale) == len(scan(INSECURE).findings)
+
+
+def test_baseline_flags_a_suppressed_finding_that_got_worse():
+    # The one way a baseline could hide something that now matters.
+    finding = _finding(severity="CRITICAL")
+    stale_entry = {finding.fingerprint: {"fingerprint": finding.fingerprint, "severity": "LOW"}}
+
+    comparison = apply_baseline([finding], stale_entry)
+    assert comparison.active == []
+    assert comparison.escalated == [(finding, "LOW")]
+
+
+def test_baseline_without_severity_recorded_does_not_crash():
+    finding = _finding()
+    entry = {finding.fingerprint: {"fingerprint": finding.fingerprint}}
+    comparison = apply_baseline([finding], entry)
+    assert comparison.suppressed == [finding]
+    assert comparison.escalated == []
+
+
+def test_load_baseline_rejects_junk(tmp_path):
+    missing = tmp_path / "nope.json"
+    try:
+        load_baseline(missing)
+        raise AssertionError("expected BaselineError for a missing file")
+    except BaselineError:
+        pass
+
+    bad_json = tmp_path / "bad.json"
+    bad_json.write_text("{not json")
+    try:
+        load_baseline(bad_json)
+        raise AssertionError("expected BaselineError for malformed JSON")
+    except BaselineError:
+        pass
+
+    wrong_shape = tmp_path / "wrong.json"
+    wrong_shape.write_text('{"findings": "not a list"}')
+    try:
+        load_baseline(wrong_shape)
+        raise AssertionError("expected BaselineError for a bad findings list")
+    except BaselineError:
+        pass
+
+
+def test_cli_baseline_adoption_flow(tmp_path):
+    runner = CliRunner()
+    path = tmp_path / "baseline.json"
+
+    # Recording a baseline exits 0 even though the fixture is full of findings,
+    # so switching the tool on does not break that same build.
+    write = runner.invoke(
+        app, ["scan", str(INSECURE), "--write-baseline", str(path)]
+    )
+    assert write.exit_code == 0, write.output
+    assert path.exists()
+
+    # With that baseline every finding is known, so the build passes.
+    clean = runner.invoke(app, ["scan", str(INSECURE), "--baseline", str(path)])
+    assert clean.exit_code == 0, clean.output
+    assert "suppressed by baseline" in clean.output
+
+    # Without it, the same scan still fails.
+    dirty = runner.invoke(app, ["scan", str(INSECURE)])
+    assert dirty.exit_code == 1
+
+
+def test_cli_baseline_errors_use_exit_code_two(tmp_path):
+    runner = CliRunner()
+
+    missing = runner.invoke(
+        app, ["scan", str(SECURE), "--baseline", str(tmp_path / "nope.json")]
+    )
+    assert missing.exit_code == 2
+
+    path = tmp_path / "b.json"
+    path.write_text("{}")
+    both = runner.invoke(
+        app,
+        [
+            "scan",
+            str(SECURE),
+            "--baseline",
+            str(path),
+            "--write-baseline",
+            str(tmp_path / "out.json"),
+        ],
+    )
     assert both.exit_code == 2

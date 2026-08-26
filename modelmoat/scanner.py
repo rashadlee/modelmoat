@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -29,6 +30,34 @@ class Finding:
     message: str
     remediation: str
     docs_url: str = ""
+    # Distinguishes findings when one check reports several problems on the
+    # same resource, for example an OpenSearch domain that is both publicly
+    # reachable and unencrypted. A short stable token, never prose, because it
+    # is part of the fingerprint and must survive rewording.
+    detail: str = ""
+
+    @property
+    def fingerprint(self) -> str:
+        """Stable identity for this finding, deliberately excluding the line.
+
+        Baselines and SARIF alert history both need to recognise the same
+        finding across commits. Editing lines above a finding moves its line
+        number without changing the finding, so the resource identity is hashed
+        instead. Message wording is excluded for the same reason: rewording a
+        finding must not orphan its history.
+
+        `detail` is included because without it every finding a check reports
+        against one resource collides, and baselining the mildest would silently
+        suppress the worst.
+        """
+        parts = (
+            self.check_id,
+            Path(self.file_path).as_posix(),
+            self.resource_type,
+            self.resource_name,
+            self.detail,
+        )
+        return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
     def to_dict(self) -> dict:
         return {
@@ -42,6 +71,8 @@ class Finding:
             "message": self.message,
             "remediation": self.remediation,
             "docs_url": self.docs_url,
+            "detail": self.detail,
+            "fingerprint": self.fingerprint,
         }
 
 

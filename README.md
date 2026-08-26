@@ -41,6 +41,7 @@ that way.
 - [Usage](#usage)
 - [Checks](#checks)
 - [Exit codes and CI](#exit-codes-and-ci)
+- [Adopting on an existing codebase](#adopting-on-an-existing-codebase)
 - [How severity is decided](#how-severity-is-decided)
 - [Design notes](#design-notes)
 - [Limitations](#limitations)
@@ -65,6 +66,7 @@ AWS account, reads state files, or touches credentials.
     modelmoat scan infra/ modules/ --min-severity HIGH
     modelmoat scan . --json > findings.json
     modelmoat scan . --sarif > modelmoat.sarif
+    modelmoat scan . --baseline .modelmoat-baseline.json
 
 Real output from the test fixtures in this repo:
 
@@ -150,6 +152,43 @@ CRITICAL and HIGH arrive as errors, MEDIUM as a warning, LOW as a note. Each
 finding carries a fingerprint built from the check and the resource rather than
 the line number, so an alert survives edits made above it.
 
+## Adopting on an existing codebase
+
+Turning a scanner on for the first time usually produces a wall of findings
+nobody has time to fix that day, which is how tools get switched back off. A
+baseline records what already exists so CI reports only what gets added
+afterwards.
+
+    modelmoat scan infra/ --write-baseline .modelmoat-baseline.json
+
+Commit that file, then scan against it:
+
+    modelmoat scan infra/ --baseline .modelmoat-baseline.json
+
+Writing a baseline exits 0 even when findings exist, so adopting the tool does
+not break the same build. Scans that use one report how many findings were
+suppressed, because a security tool that hides things without saying so is worse
+than no tool.
+
+The file is deliberately readable rather than a list of opaque hashes. A
+baseline is a record of accepted risk and belongs in code review:
+
+```json
+{
+  "fingerprint": "1ce76cc02f5b...",
+  "check_id": "S3-001",
+  "severity": "CRITICAL",
+  "resource": "aws_s3_bucket.datasets",
+  "file_path": "infra/s3.tf"
+}
+```
+
+Findings are matched on the check and the resource, not the line number, so
+edits above a finding do not silently drop it out of the baseline. Two things
+still get through: a problem the baseline never recorded, and a suppressed
+finding that has since become more severe, which is reported as a warning rather
+than hidden. Entries that no longer match anything are reported as prunable.
+
 ## How severity is decided
 
 - **CRITICAL:** the configuration itself proves internet reachability with weak
@@ -193,9 +232,7 @@ to look, not verdicts.
 
 ## Roadmap
 
-Pinecone and Weaviate providers, Azure AI and Vertex AI resources, and a
-`--baseline` file for adopting the tool on an existing codebase without a wall
-of findings on day one.
+Pinecone and Weaviate providers, and Azure AI and Vertex AI resources.
 
 ## Contributing
 
