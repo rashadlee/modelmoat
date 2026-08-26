@@ -2,10 +2,7 @@
 
 Notable changes to modelmoat. Versions follow [semantic versioning](https://semver.org).
 
-## Unreleased
-
-Nothing here has been published to PyPI yet. `0.1.0` is still the released
-version.
+## 0.2.0 - 2026-08-26
 
 ### Added
 

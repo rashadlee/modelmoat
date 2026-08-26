@@ -71,7 +71,7 @@ AWS account, reads state files, or touches credentials.
 Real output from the test fixtures in this repo:
 
 ```
-modelmoat 0.1.0 scanned 7 Terraform file(s)
+modelmoat 0.2.0 scanned 7 Terraform file(s)
   CRITICAL: 4  HIGH: 10  MEDIUM: 4  LOW: 3
 
 CRITICAL S3-001  aws_s3_bucket.datasets
