@@ -114,6 +114,14 @@ def scan(
             help="Record current findings to this file and exit 0.",
         ),
     ] = None,
+    fail_on_parse_error: Annotated[
+        bool,
+        typer.Option(
+            "--fail-on-parse-error",
+            help="Exit non-zero if any file could not be parsed. Off by default, "
+            "so unsupported HCL does not break a build.",
+        ),
+    ] = False,
 ) -> None:
     """Scan Terraform for AI infrastructure security issues."""
     if json_out and sarif_out:
@@ -172,6 +180,13 @@ def scan(
             )
 
     exit_code = 1 if result.max_rank() >= SEVERITY_RANK[fail_on] else 0
+
+    # A file modelmoat could not read is scanned by nobody, and by default that
+    # is reported as a warning rather than a failure so unsupported HCL does not
+    # break a build. Teams that would rather not have a corrupt file look
+    # identical to clean infrastructure can opt into failing.
+    if fail_on_parse_error and result.parse_errors:
+        exit_code = 1
 
     minimum = SEVERITY_RANK[min_severity]
     result.findings = [

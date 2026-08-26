@@ -452,6 +452,24 @@ def test_cli_baseline_adoption_flow(tmp_path):
     assert dirty.exit_code == 1
 
 
+def test_unparseable_file_warns_but_does_not_fail_by_default(tmp_path):
+    # Unsupported HCL should not break a build, but it must be visible.
+    bad = tmp_path / "main.tf"
+    bad.write_text("this is not terraform {{{ [[[")
+
+    runner = CliRunner()
+    default = runner.invoke(app, ["scan", str(tmp_path)])
+    assert default.exit_code == 0
+
+    # A file nobody could read must not be silently indistinguishable from
+    # clean infrastructure when a team asks for strictness.
+    strict = runner.invoke(app, ["scan", str(tmp_path), "--fail-on-parse-error"])
+    assert strict.exit_code == 1
+
+    payload = runner.invoke(app, ["scan", str(tmp_path), "--json"])
+    assert json.loads(payload.stdout)["summary"]["parse_errors"] == 1
+
+
 def test_cli_baseline_errors_use_exit_code_two(tmp_path):
     runner = CliRunner()
 

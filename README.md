@@ -107,6 +107,11 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 otherwise. The default is `HIGH`, so hygiene findings do not break builds.
 Exit code 2 means bad arguments.
 
+A file modelmoat cannot parse is reported as a warning on stderr and does not
+fail the build, so HCL the parser does not support cannot break your pipeline.
+That does mean a corrupt file and clean infrastructure produce the same exit
+code. Add `--fail-on-parse-error` if you would rather know.
+
 ```yaml
 - name: Scan AI infrastructure
   run: |
