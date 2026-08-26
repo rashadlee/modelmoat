@@ -27,3 +27,7 @@ Create a module in `modelmoat/checks/`, implement a class with `check_id`,
 `check_name`, and `run(graph) -> list[Finding]`, register it in
 `modelmoat/checks/__init__.py`, and add both fixtures plus assertions in
 `tests/`.
+
+## Releasing
+
+See [RELEASING.md](RELEASING.md).
