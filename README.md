@@ -1,5 +1,3 @@
-# modelmoat
-
 ![modelmoat](assets/banner/modelmoat-banner.png)
 
 [![PyPI](https://img.shields.io/pypi/v/modelmoat.svg)](https://pypi.org/project/modelmoat/)
