@@ -35,6 +35,19 @@ Terraform spreads related resources across files. A bucket in `s3.tf` and its
 public access block in `security.tf` are one decision, and modelmoat reads them
 that way.
 
+## Contents
+
+- [Install](#install)
+- [Usage](#usage)
+- [Checks](#checks)
+- [Exit codes and CI](#exit-codes-and-ci)
+- [How severity is decided](#how-severity-is-decided)
+- [Design notes](#design-notes)
+- [Limitations](#limitations)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## Install
 
     pipx install modelmoat
@@ -105,32 +118,30 @@ while only blocking on the serious findings.
 
 ## How severity is decided
 
-CRITICAL means the configuration itself proves internet reachability with weak
-or absent authentication. A bucket policy granting `Principal "*"` qualifies. A
-SageMaker model outside a VPC does not, because invoking it still requires a
-SigV4-signed IAM request, and modelmoat says exactly that in the finding rather
-than claiming anyone with the URL can hit your model.
-
-HIGH covers missing encryption and permissions broad enough to reach any AI
-resource in the account. MEDIUM and LOW are hygiene: a missing public access
-block is LOW, since account defaults have blocked public access on new buckets
-since April 2023, and calling it CRITICAL would be wrong.
+- **CRITICAL:** the configuration itself proves internet reachability with weak
+  or absent authentication. A bucket policy granting `Principal "*"` qualifies.
+  A SageMaker model outside a VPC does not, because invoking it still requires
+  a SigV4-signed IAM request, and modelmoat says exactly that in the finding
+  rather than claiming anyone with the URL can hit your model.
+- **HIGH:** missing encryption, or permissions broad enough to reach any AI
+  resource in the account.
+- **MEDIUM / LOW:** hygiene. A missing public access block is LOW, since
+  account defaults have blocked public access on new buckets since April 2023,
+  and calling it CRITICAL would be wrong.
 
 ## Design notes
 
-Values that come from variables or expressions are unknown, and modelmoat does
-not flag what it cannot prove. `storage_encrypted = var.encrypt_storage` produces
-no finding either way.
-
-Keyword matching is on whole tokens, never substrings. A bucket named
-`email-archive` does not match `ai`, and `html-assets` does not match `ml`. Both
-appear in the test suite as negative controls that must stay silent.
-
-The test suite has one rule above all others: the secure fixture must produce
-zero findings. A scanner that fires on correct infrastructure trains people to
-ignore it, so CI runs both directions on every push, requiring a clean pass on
-nine files of best-practice Terraform and a failing exit code on the insecure
-fixture.
+- Values that come from variables or expressions are unknown, and modelmoat
+  does not flag what it cannot prove. `storage_encrypted = var.encrypt_storage`
+  produces no finding either way.
+- Keyword matching is on whole tokens, never substrings. A bucket named
+  `email-archive` does not match `ai`, and `html-assets` does not match `ml`.
+  Both appear in the test suite as negative controls that must stay silent.
+- The test suite has one rule above all others: the secure fixture must
+  produce zero findings. A scanner that fires on correct infrastructure trains
+  people to ignore it, so CI runs both directions on every push, requiring a
+  clean pass on nine files of best-practice Terraform and a failing exit code
+  on the insecure fixture.
 
 ![modelmoat scanning correctly configured Terraform and reporting zero findings](assets/screenshots/scan-secure.svg)
 
