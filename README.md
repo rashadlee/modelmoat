@@ -23,6 +23,11 @@ Bedrock, SageMaker, and vector databases: blanket `bedrock:*` grants, model
 artifact buckets open to the internet, embedding stores without encryption, and
 inference traffic that never touches your private network.
 
+> [!TIP]
+> **modelmoat only reads local files.** It parses the `.tf` files you point it
+> at and never contacts your AWS account, reads Terraform state, or touches
+> credentials. There is nothing to configure and nothing to authenticate.
+
 ![modelmoat scanning insecure Terraform and reporting CRITICAL and HIGH findings](assets/screenshots/scan-insecure.svg)
 
 General IaC scanners check hundreds of AWS resource types and cover some of this
@@ -35,6 +40,8 @@ Terraform spreads related resources across files. A bucket in `s3.tf` and its
 public access block in `security.tf` are one decision, and modelmoat reads them
 that way.
 
+-----
+
 ## Contents
 
 - [Install](#install)
@@ -46,8 +53,11 @@ that way.
 - [Design notes](#design-notes)
 - [Limitations](#limitations)
 - [Roadmap](#roadmap)
+- [Security](#security)
 - [Contributing](#contributing)
 - [License](#license)
+
+-----
 
 ## Install
 
@@ -57,8 +67,9 @@ Or with pip:
 
     pip install modelmoat
 
-Python 3.10 or newer. modelmoat only reads local files. It never contacts your
-AWS account, reads state files, or touches credentials.
+Python 3.10 or newer.
+
+-----
 
 ## Usage
 
@@ -91,6 +102,8 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
          vpc_agent.
 ```
 
+-----
+
 ## Checks
 
 | ID | What it finds | Severity range |
@@ -103,16 +116,20 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | VEC-002 | Self-hosted Weaviate accepting unauthenticated requests, via a `helm_release` value or a container environment variable | HIGH |
 | PIN-001 | Pinecone `OrgOwner` granted at organization scope to a service account or API key | HIGH |
 
+-----
+
 ## Exit codes and CI
 
 `modelmoat scan` exits 1 when findings at or above `--fail-on` exist, and 0
 otherwise. The default is `HIGH`, so hygiene findings do not break builds.
 Exit code 2 means bad arguments.
 
-A file modelmoat cannot parse is reported as a warning on stderr and does not
-fail the build, so HCL the parser does not support cannot break your pipeline.
-That does mean a corrupt file and clean infrastructure produce the same exit
-code. Add `--fail-on-parse-error` if you would rather know.
+> [!NOTE]
+> A file modelmoat cannot parse is reported as a warning on stderr and does
+> not fail the build by default, so HCL the parser does not support cannot
+> break your pipeline. That does mean a corrupt file and clean infrastructure
+> produce the same exit code unless you opt in. Add `--fail-on-parse-error`
+> if you would rather know.
 
 ```yaml
 - name: Scan AI infrastructure
@@ -159,6 +176,8 @@ CRITICAL and HIGH arrive as errors, MEDIUM as a warning, LOW as a note. Each
 finding carries a fingerprint built from the check and the resource rather than
 the line number, so an alert survives edits made above it.
 
+-----
+
 ## Adopting on an existing codebase
 
 Turning a scanner on for the first time usually produces a wall of findings
@@ -196,6 +215,8 @@ still get through: a problem the baseline never recorded, and a suppressed
 finding that has since become more severe, which is reported as a warning rather
 than hidden. Entries that no longer match anything are reported as prunable.
 
+-----
+
 ## How severity is decided
 
 - **CRITICAL:** the configuration itself proves internet reachability with weak
@@ -208,6 +229,8 @@ than hidden. Entries that no longer match anything are reported as prunable.
 - **MEDIUM / LOW:** hygiene. A missing public access block is LOW, since
   account defaults have blocked public access on new buckets since April 2023,
   and calling it CRITICAL would be wrong.
+
+-----
 
 ## Design notes
 
@@ -225,19 +248,23 @@ than hidden. Entries that no longer match anything are reported as prunable.
 
 ![modelmoat scanning correctly configured Terraform and reporting zero findings](assets/screenshots/scan-secure.svg)
 
+-----
+
 ## Limitations
 
 modelmoat reads HCL statically. It does not evaluate modules, resolve variable
 files, expand `for_each`, or read remote state, so a security control defined in
 a module that this project only calls will not be seen.
 
-That limit has teeth for VEC-002. The Weaviate Helm chart ships anonymous access
-enabled by default, so the deployments most likely to be insecure are the ones
-that never mention the setting at all. modelmoat stays silent on those, because
-the value legitimately arrives through a values.yaml file, a ConfigMap, or a
-Secret that a static scanner cannot read. Firing on absence would flag correct
-deployments, and that trade is not available here. Self-hosted vector stores in
-`aws_ecs_task_definition` are not read yet either.
+> [!NOTE]
+> That limit has teeth for VEC-002. The Weaviate Helm chart ships anonymous
+> access enabled by default, so the deployments most likely to be insecure are
+> the ones that never mention the setting at all. modelmoat stays silent on
+> those, because the value legitimately arrives through a values.yaml file, a
+> ConfigMap, or a Secret that a static scanner cannot read. Firing on absence
+> would flag correct deployments, and that trade is not available here.
+> Self-hosted vector stores in `aws_ecs_task_definition` are not read yet
+> either.
 
 PIN-001 checks Pinecone identity rather than network isolation. That is not an
 oversight: the official Pinecone provider exposes no network attribute on any of
@@ -247,6 +274,8 @@ however the service is actually configured.
 Static analysis cannot tell you whether a security group actually permits the
 traffic you fear, or whether an IAM permission is used. Treat findings as places
 to look, not verdicts.
+
+-----
 
 ## Roadmap
 
@@ -262,11 +291,25 @@ therefore reads `helm_release` and `kubernetes_deployment` instead. Pinecone doe
 have an official provider, but it exposes no network configuration on any of its
 eight resources, so PIN-001 checks identity rather than network isolation.
 
+-----
+
+## Security
+
+> [!IMPORTANT]
+> **To report a security vulnerability in modelmoat itself, open a private
+> [GitHub Security Advisory](https://github.com/rashadlee/modelmoat/security/advisories/new)
+> rather than a public issue.** See [SECURITY.md](SECURITY.md) for details.
+> A false positive or false negative in a check is a normal GitHub issue, not
+> a security report.
+
+-----
+
 ## Contributing
 
 False positive reports are as welcome as new checks and get the same priority.
-See CONTRIBUTING.md for the rules every check follows and SECURITY.md for
-reporting a vulnerability in the tool itself.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules every check follows.
+
+-----
 
 ## License
 
