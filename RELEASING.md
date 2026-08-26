@@ -57,6 +57,15 @@ output kept a wrong number after fixtures changed.
    Verify with a real install afterward:
    `pip install modelmoat==X.Y.Z` in yet another fresh venv.
 
+   The PyPI badge in the README can keep showing the old version on GitHub
+   for a while after this. That is GitHub's own image proxy
+   (camo.githubusercontent.com) caching the badge image separately from
+   shields.io - shields.io itself is typically already correct immediately.
+   Confirm with `curl -s https://img.shields.io/pypi/v/modelmoat.svg` before
+   assuming something is wrong. If it needs to look right on GitHub sooner
+   than the cache clears on its own, change the badge URL slightly (e.g.
+   bump the `cacheSeconds` value) to force a fresh fetch.
+
 7. **Create the GitHub Release from the tag.** Not automatable without a
    token or `gh` - go to `/releases/new`, pick the tag, paste in the
    changelog entry for this version.

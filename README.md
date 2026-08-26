@@ -1,6 +1,6 @@
 ![modelmoat](assets/banner/modelmoat-banner.png)
 
-[![PyPI](https://img.shields.io/pypi/v/modelmoat.svg)](https://pypi.org/project/modelmoat/)
+[![PyPI](https://img.shields.io/pypi/v/modelmoat.svg?cacheSeconds=3600)](https://pypi.org/project/modelmoat/)
 [![Python versions](https://img.shields.io/pypi/pyversions/modelmoat.svg)](https://pypi.org/project/modelmoat/)
 [![License](https://img.shields.io/pypi/l/modelmoat.svg)](LICENSE)
 [![CI](https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml)
