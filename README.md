@@ -2,9 +2,17 @@
 
 ![modelmoat](assets/banner/modelmoat-banner.png)
 
+[![PyPI](https://img.shields.io/pypi/v/modelmoat.svg)](https://pypi.org/project/modelmoat/)
+[![Python versions](https://img.shields.io/pypi/pyversions/modelmoat.svg)](https://pypi.org/project/modelmoat/)
+[![License](https://img.shields.io/pypi/l/modelmoat.svg)](LICENSE)
+[![CI](https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml)
+
 <!-- NOTE: the repo is currently private, so this file uses relative image paths
    (they render on GitHub for anyone with repo access; absolute URLs don't,
    since GitHub's image proxy can't fetch private content even for the owner).
+   The CI badge above is also likely broken until the repo is public and a
+   workflow run has completed on master - GitHub's badge endpoint 404s for
+   unauthenticated requests to private repos. Check it once public.
    Before making the repo public or publishing a new PyPI version, switch the
    banner and screenshot image paths below to absolute GitHub raw URLs, e.g.:
    https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/banner/modelmoat-banner.png
