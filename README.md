@@ -295,12 +295,17 @@ eight resources, so PIN-001 checks identity rather than network isolation.
 
 ## Security
 
+<!-- GitHub's private vulnerability reporting only exists for public repos, so
+   the /security/advisories/new link 404s while this repo is private. Once
+   public, enable it under Settings -> Advanced Security -> Private
+   vulnerability reporting, then restore the direct link here and in
+   SECURITY.md. -->
+
 > [!IMPORTANT]
-> **To report a security vulnerability in modelmoat itself, open a private
-> [GitHub Security Advisory](https://github.com/rashadlee/modelmoat/security/advisories/new)
-> rather than a public issue.** See [SECURITY.md](SECURITY.md) for details.
-> A false positive or false negative in a check is a normal GitHub issue, not
-> a security report.
+> **Please do not open a public issue for a security vulnerability in
+> modelmoat itself.** See [SECURITY.md](SECURITY.md) for how to report one
+> privately. A false positive or false negative in a check is a normal GitHub
+> issue, not a security report.
 
 -----
 
