@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" fill="none" role="img" aria-label="modelmoat — dig a moat around your models">
+  <rect width="1280" height="400" fill="#292929"></rect>
+  <g font-family="'Geist Mono','SFMono-Regular',Menlo,Consolas,monospace">
+    <text x="88" y="172" font-size="64" font-weight="500" letter-spacing="-2.4" fill="#c5c8c6">model<tspan fill="#608ab1">moat</tspan></text>
+    <text x="88" y="200" font-size="20" letter-spacing="-0.2" fill="#9a9d9b">Dig a moat around your models</text>
+    <rect x="88" y="250" width="56" height="1" fill="#444644"></rect>
+    <text x="88" y="270" font-size="13" fill="#6f7371">static analysis for terraform</text>
+    <g font-size="13" fill="#8b8e8c">
+      <rect x="88" y="296" width="8" height="8" fill="#cc555a"></rect><text x="104" y="304">sagemaker</text>
+      <rect x="196" y="296" width="8" height="8" fill="#d0b344"></rect><text x="212" y="304">bedrock iam</text>
+      <rect x="320" y="296" width="8" height="8" fill="#608ab1"></rect><text x="336" y="304">model buckets</text>
+      <rect x="460" y="296" width="8" height="8" fill="#608ab1"></rect><text x="476" y="304">vector db</text>
+    </g>
+  </g>
+  <g transform="translate(752 50)" font-family="'Geist Mono','SFMono-Regular',Menlo,Consolas,monospace">
+    <rect x="24" y="30" width="400" height="240" rx="8" stroke="#608ab1" stroke-width="1.25" stroke-dasharray="5 4" opacity="0.8"></rect>
+    <path d="M24 52 L24 30 L46 30" stroke="#608ab1" stroke-width="2"></path>
+    <path d="M402 30 L424 30 L424 52" stroke="#608ab1" stroke-width="2"></path>
+    <path d="M24 248 L24 270 L46 270" stroke="#608ab1" stroke-width="2"></path>
+    <path d="M402 270 L424 270 L424 248" stroke="#608ab1" stroke-width="2"></path>
+    <rect x="46" y="22" width="94" height="16" fill="#292929"></rect>
+    <text x="52" y="35" fill="#608ab1" font-size="11" letter-spacing="1.4">PERIMETER</text>
+    <rect x="94" y="84" width="260" height="132" rx="6" stroke="#585b59" stroke-width="1.25"></rect>
+    <rect x="164" y="122" width="120" height="56" rx="4" fill="#333433" stroke="#c5c8c6" stroke-width="1.25"></rect>
+    <text x="224" y="155" fill="#c5c8c6" font-size="14" text-anchor="middle">model</text>
+    <line x1="224" y1="84" x2="224" y2="122" stroke="#585b59" stroke-width="1.25"></line>
+    <line x1="224" y1="178" x2="224" y2="216" stroke="#585b59" stroke-width="1.25"></line>
+    <circle cx="224" cy="84" r="3" fill="#585b59"></circle>
+    <circle cx="224" cy="216" r="3" fill="#585b59"></circle>
+    <line x1="0" y1="150" x2="14" y2="150" stroke="#cc555a" stroke-width="1.25"></line>
+    <path d="M17 144 L27 156 M27 144 L17 156" stroke="#cc555a" stroke-width="1.5"></path>
+  </g>
+</svg>

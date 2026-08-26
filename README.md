@@ -1,13 +1,13 @@
 # modelmoat
 
-<!-- Banner goes here, e.g.: ![modelmoat](assets/banner.png)
+![modelmoat](assets/banner/modelmoat-banner.png)
 
-   NOTE: the repo is currently private, so this file uses relative image paths
+<!-- NOTE: the repo is currently private, so this file uses relative image paths
    (they render on GitHub for anyone with repo access; absolute URLs don't,
    since GitHub's image proxy can't fetch private content even for the owner).
    Before making the repo public or publishing a new PyPI version, switch the
    banner and screenshot image paths below to absolute GitHub raw URLs, e.g.:
-   https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/banner.png
+   https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/banner/modelmoat-banner.png
    Relative paths render fine on GitHub but show as broken images on PyPI,
    which has no access to the rest of the repo tree. -->
 
