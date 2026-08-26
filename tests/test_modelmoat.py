@@ -62,7 +62,15 @@ def test_secure_stack_yields_zero_findings():
 def test_every_check_fires_on_insecure_stack():
     result = scan(INSECURE)
     ids = {f.check_id for f in result.findings}
-    assert {"SMK-001", "IAM-001", "S3-001", "VPC-001", "VEC-001"} <= ids
+    assert {
+        "SMK-001",
+        "IAM-001",
+        "S3-001",
+        "VPC-001",
+        "VEC-001",
+        "VEC-002",
+        "PIN-001",
+    } <= ids
 
 
 def test_managed_fullaccess_attachment_is_detected():
@@ -145,6 +153,63 @@ def test_public_postgres_is_critical():
         and f.severity == "CRITICAL"
         for f in result.findings
     )
+
+
+# --------------------------------------------------------------------- #
+# PIN-001 and VEC-002: vector stores outside AWS                        #
+# --------------------------------------------------------------------- #
+def test_pinecone_org_owner_on_machine_principal_is_high():
+    result = scan(INSECURE)
+    hits = [f for f in result.findings if f.check_id == "PIN-001"]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+    assert hits[0].resource_name == "indexer_org_owner"
+
+
+def test_pinecone_org_manager_is_never_flagged():
+    # OrgManager only grants viewing organization details and creating
+    # projects. Flagging it on the strength of its name would claim more than
+    # the role grants. It sits in the secure fixture as a permanent control.
+    for fixture in (SECURE, INSECURE):
+        named = {f.resource_name for f in scan(fixture).findings}
+        assert "provisioner" not in named
+
+
+def test_pinecone_human_owner_and_unknown_role_stay_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "founder" not in named, "a person owning the organization is ordinary"
+    assert "from_variable" not in named, "a role from a variable is unprovable"
+
+
+def test_weaviate_anonymous_access_detected_in_helm_and_containers():
+    hits = {f.resource_name for f in scan(INSECURE).findings if f.check_id == "VEC-002"}
+    assert hits == {"weaviate", "weaviate_embeddings"}
+
+
+def test_weaviate_accepts_every_value_weaviate_itself_treats_as_enabled():
+    # Weaviate's entities/config/helpers.go treats on, enabled, 1 and true as
+    # enabled. The insecure fixture uses "1" precisely so that matching only
+    # "true" would fail this test.
+    from modelmoat.checks.weaviate import _explicitly_enabled
+
+    for value in ("true", "True", "1", "on", "enabled"):
+        assert _explicitly_enabled(value), value
+    for value in ("false", "0", "off", "", "${var.anon}"):
+        assert not _explicitly_enabled(value), value
+
+
+def test_weaviate_absent_setting_is_deliberately_not_flagged():
+    # The chart default is insecure, but the value legitimately arrives via
+    # values.yaml, a ConfigMap, or a Secret. Absence is unprovable, so this
+    # check knowingly misses those rather than guessing.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "weaviate_from_values_file" not in named
+
+
+def test_weaviate_matching_is_whole_token_and_chart_scoped():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "unrelated_app" not in named, "another chart is not weaviate"
+    assert "lookalike" not in named, "weaviatelike is not weaviate"
 
 
 # --------------------------------------------------------------------- #

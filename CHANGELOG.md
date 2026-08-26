@@ -9,6 +9,16 @@ version.
 
 ### Added
 
+- VEC-002 flags a self-hosted Weaviate that accepts unauthenticated requests,
+  read from a `helm_release` value or a container environment variable on
+  `kubernetes_deployment` and `kubernetes_stateful_set`. It fires only on an
+  explicitly enabled value, never on absence, because the value legitimately
+  arrives through a values.yaml file or a Secret the scanner cannot read.
+  Enabled means any of `on`, `enabled`, `1`, `true`, matching Weaviate's own
+  truthiness helper.
+- PIN-001 flags Pinecone `OrgOwner` granted at organization scope to a service
+  account or API key. `OrgManager` is deliberately not flagged: it grants only
+  viewing the organization and creating projects.
 - `--sarif` emits SARIF 2.1.0, so findings reach the GitHub Security tab and
   pull request annotations instead of only CI logs. CRITICAL and HIGH arrive as
   errors, MEDIUM as a warning, LOW as a note. Output is validated against the

@@ -71,8 +71,8 @@ AWS account, reads state files, or touches credentials.
 Real output from the test fixtures in this repo:
 
 ```
-modelmoat 0.1.0 scanned 6 Terraform file(s)
-  CRITICAL: 4  HIGH: 7  MEDIUM: 4  LOW: 3
+modelmoat 0.1.0 scanned 7 Terraform file(s)
+  CRITICAL: 4  HIGH: 10  MEDIUM: 4  LOW: 3
 
 CRITICAL S3-001  aws_s3_bucket.datasets
          tests/fixtures/insecure/s3_bad.tf:11
@@ -100,6 +100,8 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | S3-001 | AI-related buckets exposed by a public ACL or a `Principal "*"` policy, plus weakened or missing public access blocks | CRITICAL to LOW |
 | VPC-001 | Lambda functions calling Bedrock or SageMaker with no matching interface VPC endpoint in the project | MEDIUM to LOW |
 | VEC-001 | OpenSearch, pgvector-capable Postgres, and AI-named ElastiCache missing encryption or network isolation | CRITICAL to LOW |
+| VEC-002 | Self-hosted Weaviate accepting unauthenticated requests, via a `helm_release` value or a container environment variable | HIGH |
+| PIN-001 | Pinecone `OrgOwner` granted at organization scope to a service account or API key | HIGH |
 
 ## Exit codes and CI
 
@@ -218,7 +220,7 @@ than hidden. Entries that no longer match anything are reported as prunable.
 - The test suite has one rule above all others: the secure fixture must
   produce zero findings. A scanner that fires on correct infrastructure trains
   people to ignore it, so CI runs both directions on every push, requiring a
-  clean pass on nine files of best-practice Terraform and a failing exit code
+  clean pass on ten files of best-practice Terraform and a failing exit code
   on the insecure fixture.
 
 ![modelmoat scanning correctly configured Terraform and reporting zero findings](assets/screenshots/scan-secure.svg)
@@ -227,9 +229,20 @@ than hidden. Entries that no longer match anything are reported as prunable.
 
 modelmoat reads HCL statically. It does not evaluate modules, resolve variable
 files, expand `for_each`, or read remote state, so a security control defined in
-a module that this project only calls will not be seen. Coverage is AWS only
-today, and provider-specific vector databases like Pinecone and Weaviate are not
-yet checked.
+a module that this project only calls will not be seen.
+
+That limit has teeth for VEC-002. The Weaviate Helm chart ships anonymous access
+enabled by default, so the deployments most likely to be insecure are the ones
+that never mention the setting at all. modelmoat stays silent on those, because
+the value legitimately arrives through a values.yaml file, a ConfigMap, or a
+Secret that a static scanner cannot read. Firing on absence would flag correct
+deployments, and that trade is not available here. Self-hosted vector stores in
+`aws_ecs_task_definition` are not read yet either.
+
+PIN-001 checks Pinecone identity rather than network isolation. That is not an
+oversight: the official Pinecone provider exposes no network attribute on any of
+its eight resources, so private endpoint posture cannot be proven from Terraform
+however the service is actually configured.
 
 Static analysis cannot tell you whether a security group actually permits the
 traffic you fear, or whether an IAM permission is used. Treat findings as places
@@ -237,7 +250,17 @@ to look, not verdicts.
 
 ## Roadmap
 
-Pinecone and Weaviate providers, and Azure AI and Vertex AI resources.
+Azure AI and Vertex AI resources, ECS task definitions carrying self-hosted
+vector stores, and correlating an unauthenticated vector store with proof that
+it is publicly reachable.
+
+Pinecone and Weaviate were on this list as "providers" and shipped as something
+else, because that framing did not survive contact with the registry. There is
+no Terraform provider for Weaviate at all: Weaviate Cloud has no public cluster
+provisioning API, so there is no control plane for a provider to wrap. VEC-002
+therefore reads `helm_release` and `kubernetes_deployment` instead. Pinecone does
+have an official provider, but it exposes no network configuration on any of its
+eight resources, so PIN-001 checks identity rather than network isolation.
 
 ## Contributing
 

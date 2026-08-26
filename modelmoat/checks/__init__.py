@@ -3,8 +3,10 @@
 from .datastores import VectorDataStoreCheck
 from .iam import AIServiceIAMCheck
 from .network import AIVPCEndpointCheck
+from .pinecone import PineconeOrgRoleCheck
 from .s3 import ModelArtifactBucketCheck
 from .sagemaker import SageMakerNetworkCheck
+from .weaviate import WeaviateAnonymousAccessCheck
 
 ALL_CHECKS = [
     SageMakerNetworkCheck(),
@@ -12,4 +14,6 @@ ALL_CHECKS = [
     ModelArtifactBucketCheck(),
     AIVPCEndpointCheck(),
     VectorDataStoreCheck(),
+    WeaviateAnonymousAccessCheck(),
+    PineconeOrgRoleCheck(),
 ]
