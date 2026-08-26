@@ -11,6 +11,7 @@ from rich.console import Console
 
 from . import __version__
 from .checks import ALL_CHECKS
+from .sarif import to_sarif_json
 from .scanner import SEVERITIES, SEVERITY_RANK, Scanner
 
 app = typer.Typer(
@@ -75,6 +76,13 @@ def scan(
     json_out: Annotated[
         bool, typer.Option("--json", "-j", help="Emit machine-readable JSON on stdout.")
     ] = False,
+    sarif_out: Annotated[
+        bool,
+        typer.Option(
+            "--sarif",
+            help="Emit SARIF 2.1.0 on stdout, for GitHub code scanning.",
+        ),
+    ] = False,
     min_severity: Annotated[
         str,
         typer.Option(
@@ -93,6 +101,10 @@ def scan(
     ] = "HIGH",
 ) -> None:
     """Scan Terraform for AI infrastructure security issues."""
+    if json_out and sarif_out:
+        error_console.print("[red]--json and --sarif are mutually exclusive[/red]")
+        raise typer.Exit(code=2)
+
     min_severity = _validate_severity(min_severity, "--min-severity")
     fail_on = _validate_severity(fail_on, "--fail-on")
 
@@ -106,6 +118,11 @@ def scan(
 
     if json_out:
         sys.stdout.write(result.to_json())
+        sys.stdout.write("\n")
+        raise typer.Exit(code=exit_code)
+
+    if sarif_out:
+        sys.stdout.write(to_sarif_json(result, ALL_CHECKS))
         sys.stdout.write("\n")
         raise typer.Exit(code=exit_code)
 

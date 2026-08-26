@@ -11,6 +11,7 @@ The two rules every check lives by:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -23,7 +24,8 @@ from modelmoat.policy import (
     risky_managed_policy,
     wildcard_ai_grants,
 )
-from modelmoat.scanner import Scanner
+from modelmoat.sarif import _fingerprint, to_sarif
+from modelmoat.scanner import Finding, Scanner
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SECURE = FIXTURES / "secure"
@@ -204,3 +206,103 @@ def test_cli_exit_codes_for_ci():
         app, ["scan", str(SECURE), "--fail-on", "LOW", "--json"]
     )
     assert loose.exit_code == 0
+
+
+# --------------------------------------------------------------------- #
+# SARIF output                                                          #
+# --------------------------------------------------------------------- #
+def _finding(**overrides) -> Finding:
+    base = {
+        "check_id": "S3-001",
+        "check_name": "AI Data Bucket Public Exposure",
+        "severity": "CRITICAL",
+        "resource_type": "aws_s3_bucket",
+        "resource_name": "datasets",
+        "file_path": "infra/s3.tf",
+        "line": 11,
+        "message": "m",
+        "remediation": "r",
+    }
+    base.update(overrides)
+    return Finding(**base)
+
+
+def test_sarif_envelope_is_well_formed():
+    log = to_sarif(scan(INSECURE), ALL_CHECKS)
+    assert log["version"] == "2.1.0"
+    assert len(log["runs"]) == 1
+    driver = log["runs"][0]["tool"]["driver"]
+    assert driver["name"] == "modelmoat"
+    assert driver["informationUri"]
+
+
+def test_sarif_rule_catalog_lists_every_check_not_just_the_ones_that_fired():
+    # The secure fixture fires nothing, but the catalog still describes the
+    # full rule set so a consumer can see what the tool covers.
+    log = to_sarif(scan(SECURE), ALL_CHECKS)
+    ids = {rule["id"] for rule in log["runs"][0]["tool"]["driver"]["rules"]}
+    assert {"SMK-001", "IAM-001", "S3-001", "VPC-001", "VEC-001"} <= ids
+
+
+def test_sarif_rule_index_points_at_the_matching_rule():
+    # A wrong ruleIndex silently mislabels a finding as a different check.
+    run = to_sarif(scan(INSECURE), ALL_CHECKS)["runs"][0]
+    rules = run["tool"]["driver"]["rules"]
+    assert run["results"]
+    for result in run["results"]:
+        assert rules[result["ruleIndex"]]["id"] == result["ruleId"]
+
+
+def test_sarif_severity_maps_to_level_and_security_severity():
+    run = to_sarif(scan(INSECURE), ALL_CHECKS)["runs"][0]
+    seen = set()
+    for result in run["results"]:
+        severity = result["properties"]["severity"]
+        seen.add(severity)
+        expected = {
+            "CRITICAL": ("error", "9.0"),
+            "HIGH": ("error", "7.0"),
+            "MEDIUM": ("warning", "4.0"),
+            "LOW": ("note", "1.0"),
+        }[severity]
+        assert (result["level"], result["properties"]["security-severity"]) == expected
+    assert {"CRITICAL", "HIGH", "MEDIUM", "LOW"} <= seen
+
+
+def test_sarif_start_line_is_always_positive():
+    # SARIF requires a 1-based line. Line numbers come from a regex scan that
+    # can miss, and startLine 0 makes the whole log invalid.
+    run = to_sarif(scan(INSECURE), ALL_CHECKS)["runs"][0]
+    for result in run["results"]:
+        region = result["locations"][0]["physicalLocation"]["region"]
+        assert region["startLine"] >= 1
+
+
+def test_sarif_on_secure_fixture_has_zero_results():
+    run = to_sarif(scan(SECURE), ALL_CHECKS)["runs"][0]
+    assert run["results"] == []
+
+
+def test_sarif_fingerprint_survives_line_movement():
+    # Editing lines above a finding must not orphan its alert history.
+    assert _fingerprint(_finding()) == _fingerprint(_finding(line=99))
+    assert _fingerprint(_finding()) != _fingerprint(_finding(resource_name="other"))
+    assert _fingerprint(_finding()) != _fingerprint(_finding(file_path="other.tf"))
+
+
+def test_cli_sarif_matches_json_exit_codes_and_emits_valid_json():
+    runner = CliRunner()
+
+    dirty = runner.invoke(app, ["scan", str(INSECURE), "--sarif"])
+    assert dirty.exit_code == 1
+    assert json.loads(dirty.stdout)["version"] == "2.1.0"
+
+    clean = runner.invoke(app, ["scan", str(SECURE), "--sarif"])
+    assert clean.exit_code == 0
+    assert json.loads(clean.stdout)["runs"][0]["results"] == []
+
+
+def test_cli_rejects_json_and_sarif_together():
+    runner = CliRunner()
+    both = runner.invoke(app, ["scan", str(SECURE), "--json", "--sarif"])
+    assert both.exit_code == 2

@@ -64,6 +64,7 @@ AWS account, reads state files, or touches credentials.
     modelmoat scan .
     modelmoat scan infra/ modules/ --min-severity HIGH
     modelmoat scan . --json > findings.json
+    modelmoat scan . --sarif > modelmoat.sarif
 
 Real output from the test fixtures in this repo:
 
@@ -116,6 +117,39 @@ Tighten with `--fail-on MEDIUM` once your baseline is clean, or loosen to
 printed and is separate from what fails the build, so you can see everything
 while only blocking on the serious findings.
 
+### GitHub code scanning
+
+`--sarif` emits SARIF 2.1.0, so findings land in the repository Security tab
+with the file and line annotated on the pull request.
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+
+steps:
+  - uses: actions/checkout@v4
+
+  - name: Scan AI infrastructure
+    run: |
+      pip install modelmoat
+      modelmoat scan infra/ --sarif > modelmoat.sarif
+
+  - name: Upload to code scanning
+    if: always()
+    uses: github/codeql-action/upload-sarif@v3
+    with:
+      sarif_file: modelmoat.sarif
+```
+
+The `if: always()` matters. The scan exits non-zero when it finds something, and
+without it the upload is skipped exactly when there is something to upload. The
+job still fails on findings, and the alerts still reach the Security tab.
+
+CRITICAL and HIGH arrive as errors, MEDIUM as a warning, LOW as a note. Each
+finding carries a fingerprint built from the check and the resource rather than
+the line number, so an alert survives edits made above it.
+
 ## How severity is decided
 
 - **CRITICAL:** the configuration itself proves internet reachability with weak
@@ -159,9 +193,9 @@ to look, not verdicts.
 
 ## Roadmap
 
-Pinecone and Weaviate providers, SARIF output for GitHub code scanning, Azure AI
-and Vertex AI resources, and a `--baseline` file for adopting the tool on an
-existing codebase without a wall of findings on day one.
+Pinecone and Weaviate providers, Azure AI and Vertex AI resources, and a
+`--baseline` file for adopting the tool on an existing codebase without a wall
+of findings on day one.
 
 ## Contributing
 
