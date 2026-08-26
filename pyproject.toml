@@ -38,6 +38,9 @@ modelmoat = "modelmoat.cli:main"
 Homepage = "https://github.com/rashadlee/modelmoat"
 Issues = "https://github.com/rashadlee/modelmoat/issues"
 
+[tool.hatch.build]
+exclude = ["CLAUDE.md"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
