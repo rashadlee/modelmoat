@@ -12,3 +12,4 @@ coverage.xml
 venv/
 .terraform/
 findings.json
+CLAUDE.md
