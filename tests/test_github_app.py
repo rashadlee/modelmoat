@@ -33,6 +33,7 @@ from github_app.installation import (
     exchange_installation_token,
     list_installations,
 )
+from github_app.pr_files import fetch_pr_files
 from github_app.signature import verify_signature
 from github_app.tree import TreeFetchError, fetch_terraform_tree
 from modelmoat.scanner import Finding
@@ -535,3 +536,47 @@ def test_fetched_tree_is_directly_usable_by_the_real_scanner():
 
     result = Scanner(ALL_CHECKS).scan([top])
     assert any(f.check_id == "S3-001" for f in result.findings)
+
+
+# --------------------------------------------------------------------- #
+# pr_files.fetch_pr_files                                               #
+# --------------------------------------------------------------------- #
+def test_fetch_pr_files_returns_a_single_page_unchanged():
+    ok = _mock_response(200, [{"filename": "main.tf", "patch": "@@ -0,0 +1 @@\n+x"}])
+    with patch("github_app.pr_files.requests.get", return_value=ok) as get:
+        result = fetch_pr_files("fake.token", "rashadlee/modelmoat", 42)
+    assert result == [{"filename": "main.tf", "patch": "@@ -0,0 +1 @@\n+x"}]
+    get.assert_called_once()
+    args, kwargs = get.call_args
+    assert args[0] == "https://api.github.com/repos/rashadlee/modelmoat/pulls/42/files"
+    assert kwargs["headers"]["Authorization"] == "Bearer fake.token"
+    assert kwargs["params"] == {"per_page": 100, "page": 1}
+
+
+def test_fetch_pr_files_follows_pagination_across_a_full_page():
+    page_one = _mock_response(200, [{"filename": f"f{i}.tf"} for i in range(100)])
+    page_two = _mock_response(200, [{"filename": "last.tf"}])
+    with patch(
+        "github_app.pr_files.requests.get", side_effect=[page_one, page_two]
+    ) as get:
+        result = fetch_pr_files("fake.token", "rashadlee/modelmoat", 42)
+    assert len(result) == 101
+    assert result[-1] == {"filename": "last.tf"}
+    assert get.call_count == 2
+    assert get.call_args_list[1].kwargs["params"] == {"per_page": 100, "page": 2}
+
+
+def test_fetch_pr_files_stops_without_a_second_call_when_the_first_page_is_short():
+    ok = _mock_response(200, [{"filename": "only.tf"}])
+    with patch("github_app.pr_files.requests.get", return_value=ok) as get:
+        fetch_pr_files("fake.token", "rashadlee/modelmoat", 42)
+    assert get.call_count == 1
+
+
+def test_fetch_pr_files_raises_on_a_non_200_response():
+    denied = _mock_response(404, {"message": "Not Found"})
+    with (
+        patch("github_app.pr_files.requests.get", return_value=denied),
+        pytest.raises(GitHubAppAPIError),
+    ):
+        fetch_pr_files("fake.token", "rashadlee/modelmoat", 42)
