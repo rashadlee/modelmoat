@@ -67,8 +67,41 @@ output kept a wrong number after fixtures changed.
    bump the `cacheSeconds` value) to force a fresh fetch.
 
 7. **Create the GitHub Release from the tag.** Not automatable without a
-   token or `gh` - go to `/releases/new`, pick the tag, paste in the
-   changelog entry for this version.
+   token or `gh` - go to `/releases/new`, pick the tag, and write the release
+   body by hand.
+
+   Do not rely on GitHub's "Generate release notes" button - the "What's
+   Changed" list, PR links, and "New Contributors" section it produces are
+   all built from merged pull requests, and every modelmoat commit lands
+   directly on `master`. With no PRs in the range it generates nothing but
+   the "Full Changelog" compare link. Confirmed empirically on v0.2.0.
+
+   Instead, condense that version's `CHANGELOG.md` entry into one-line
+   bullets under `## Added` / `## Fixed` headers (drop the longer
+   explanatory prose - that belongs in the changelog, not here). End each
+   bullet with a link to the commit that made that change, the same role a
+   PR link plays in a PR-based project's auto-generated notes - find it with
+   `git log v<prev>..v<this> --oneline`. Close with the compare link:
+
+       ## Added
+
+       - `FLAG-ID`: one line, what it does ([abc1234](https://github.com/rashadlee/modelmoat/commit/abc1234))
+
+       ## Fixed
+
+       - one line, what broke and how ([abc1234](https://github.com/rashadlee/modelmoat/commit/abc1234))
+
+       **Full Changelog**: https://github.com/rashadlee/modelmoat/compare/vX.Y.Z-1...vX.Y.Z
+
+   A short 7-character SHA is enough - GitHub resolves it and autolinks bare
+   SHAs on its own, but an explicit markdown link renders identically to a
+   PR link, which is the point.
+
+   This is a workflow choice, not a limitation to work around: switching to
+   pull requests for every change would make the auto-generated version
+   richer, but adds real per-change overhead for no reviewer other than
+   yourself. Revisit only if that tradeoff changes - e.g. other contributors
+   show up, or PR-gated CI checks become worth having.
 
 8. **If the repo is still private:** the images and CI badge in the README
    will not render on GitHub for anyone without repo access, and image paths
