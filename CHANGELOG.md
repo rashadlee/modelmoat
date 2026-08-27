@@ -2,6 +2,16 @@
 
 Notable changes to modelmoat. Versions follow [semantic versioning](https://semver.org).
 
+## 0.2.1 - 2026-08-27
+
+### Fixed
+
+- The banner and screenshot images in the README used relative paths, which
+  render fine on GitHub but show as broken images on PyPI, since PyPI's
+  long_description has no access to the rest of the repo tree. The 0.2.0
+  package on PyPI shipped with these broken - now absolute
+  `raw.githubusercontent.com` URLs pinned to `master`.
+
 ## 0.2.0 - 2026-08-26
 
 ### Added
