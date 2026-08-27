@@ -2,3 +2,4 @@
 # modelmoat's own pyproject.toml: CLI/pip users should never need a JWT
 # library or an HTTP client just to run `modelmoat scan`.
 PyJWT[crypto]>=2.8,<3
+requests>=2.31,<3

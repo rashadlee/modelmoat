@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import time
+from unittest.mock import Mock, patch
 
 import jwt
 import pytest
@@ -24,7 +25,14 @@ from github_app.comments import InlineComment, classify_findings, summary_body
 from github_app.diff import added_lines, added_lines_by_file
 from github_app.events import PullRequestTarget, relevant_pull_request
 from github_app.handler import lambda_handler
+from github_app.installation import (
+    GitHubAppAPIError,
+    InstallationToken,
+    exchange_installation_token,
+    list_installations,
+)
 from github_app.signature import verify_signature
+from modelmoat.scanner import Finding
 
 
 def _generate_keypair() -> tuple[str, str]:
@@ -49,7 +57,6 @@ def _generate_keypair() -> tuple[str, str]:
 # the slow part, and nothing here depends on a fresh key per test case.
 # Never the maintainer's real App key: that key is never read by tests.
 _TEST_PRIVATE_KEY, _TEST_PUBLIC_KEY = _generate_keypair()
-from modelmoat.scanner import Finding
 
 # Old file (3 lines):
 #   resource "aws_s3_bucket" "datasets" {
@@ -373,3 +380,58 @@ def test_build_jwt_defaults_to_the_real_current_time():
     # window around the real clock rather than an exact second, since the
     # test itself takes some non-zero time to run.
     assert before - 61 <= decoded["iat"] <= after - 59
+
+
+# --------------------------------------------------------------------- #
+# installation.exchange_installation_token / list_installations         #
+# --------------------------------------------------------------------- #
+def _mock_response(status_code: int, json_body: dict | list, text: str = "") -> Mock:
+    response = Mock()
+    response.status_code = status_code
+    response.json.return_value = json_body
+    response.text = text or json.dumps(json_body)
+    return response
+
+
+def test_exchange_installation_token_parses_a_successful_response():
+    ok = _mock_response(
+        201, {"token": "ghs_fake", "expires_at": "2026-01-01T00:00:00Z"}
+    )
+    with patch("github_app.installation.requests.post", return_value=ok) as post:
+        result = exchange_installation_token("fake.jwt", 987)
+    assert result == InstallationToken(token="ghs_fake", expires_at="2026-01-01T00:00:00Z")
+    post.assert_called_once()
+
+
+def test_exchange_installation_token_sends_the_jwt_as_a_bearer_token_and_correct_url():
+    ok = _mock_response(201, {"token": "t", "expires_at": "e"})
+    with patch("github_app.installation.requests.post", return_value=ok) as post:
+        exchange_installation_token("my.jwt.value", 987)
+    args, kwargs = post.call_args
+    assert args[0] == "https://api.github.com/app/installations/987/access_tokens"
+    assert kwargs["headers"]["Authorization"] == "Bearer my.jwt.value"
+
+
+def test_exchange_installation_token_raises_on_a_non_201_response():
+    denied = _mock_response(401, {"message": "Bad credentials"})
+    with (
+        patch("github_app.installation.requests.post", return_value=denied),
+        pytest.raises(GitHubAppAPIError),
+    ):
+        exchange_installation_token("fake.jwt", 987)
+
+
+def test_list_installations_returns_the_parsed_json_array():
+    ok = _mock_response(200, [{"id": 987, "account": {"login": "rashadlee"}}])
+    with patch("github_app.installation.requests.get", return_value=ok):
+        result = list_installations("fake.jwt")
+    assert result == [{"id": 987, "account": {"login": "rashadlee"}}]
+
+
+def test_list_installations_raises_on_a_non_200_response():
+    denied = _mock_response(403, {"message": "forbidden"})
+    with (
+        patch("github_app.installation.requests.get", return_value=denied),
+        pytest.raises(GitHubAppAPIError),
+    ):
+        list_installations("fake.jwt")
