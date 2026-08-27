@@ -5,6 +5,25 @@ This exists because both have already gone stale in real releases: `--version`
 once kept reporting the old release after a bump, and the README's example
 output kept a wrong number after fixtures changed.
 
+## Versioning
+
+`CHANGELOG.md` commits to semantic versioning. Individual commits never bump
+the version - `pyproject.toml`'s `version` only changes when a release
+actually happens, so `master` can carry any number of small commits between
+releases at the same version. What changes is which number the *next*
+release gets:
+
+- **PATCH** (0.2.0 -> 0.2.1): bug fixes only. Nothing new to use, something
+  broken now works.
+- **MINOR** (0.2.0 -> 0.3.0): anything new - a check, a flag, a capability.
+  One small new check is still MINOR, not PATCH; "new" is the test, not
+  "big."
+- **MAJOR**: a breaking change - a renamed check ID (breaks existing
+  baseline files, since fingerprints hash `check_id`), a removed flag, or a
+  default that changes exit codes for an existing CI config. Semver allows
+  breaking changes without a MAJOR bump pre-1.0 (`0.x.y`), but reserve it
+  for these anyway, so a version jump always means the same thing.
+
 1. **Bump the version.** Edit `version` in `pyproject.toml`. That is the only
    place to edit it - `modelmoat.__version__` reads it from installed package
    metadata, not a second hardcoded string.
