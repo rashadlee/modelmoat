@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from github_app.auth import build_jwt
 from github_app.comments import InlineComment, classify_findings, summary_body
-from github_app.credentials import get_credentials
+from github_app.credentials import CredentialsError, get_credentials
 from github_app.diff import added_lines, added_lines_by_file
 from github_app.events import PullRequestTarget, relevant_pull_request
 from github_app.handler import lambda_handler
@@ -373,6 +373,21 @@ def test_handler_returns_502_when_an_upstream_github_call_fails(monkeypatch, tmp
     assert "#7" in result["body"]
     assert posted["review"] is None and posted["summary"] is None
     assert not top.exists()  # still cleaned up even though the pipeline failed
+
+
+def test_handler_returns_502_when_credentials_cannot_be_fetched(monkeypatch):
+    # Distinct from the upstream-GitHub-call 502 above: this fails before
+    # the signature can even be checked, so it must not crash unhandled -
+    # a Secrets Manager hiccup deserves the same clean response as any
+    # other upstream failure, not Lambda's own generic error page.
+    def _raise():
+        raise CredentialsError("boom")
+
+    monkeypatch.setattr("github_app.handler.get_credentials", _raise)
+    event = _lambda_event(_pr_payload(), "test-secret")
+    result = lambda_handler(event, None)
+    assert result["statusCode"] == 502
+    assert "boom" in result["body"]
 
 
 def test_handler_rejects_an_invalid_signature(monkeypatch):
@@ -769,3 +784,18 @@ def test_get_credentials_caches_after_the_first_call(monkeypatch):
         second = get_credentials()
     assert first is second
     assert mock_client.get_secret_value.call_count == 1
+
+
+def test_get_credentials_wraps_any_failure_in_credentials_error(monkeypatch):
+    # botocore raises its own ClientError subclasses, a missing env var
+    # raises KeyError, a malformed secret raises JSONDecodeError - callers
+    # should only ever have to catch one type.
+    _reset_credentials_cache()
+    monkeypatch.setenv("GITHUB_CREDENTIALS_SECRET_ARN", "arn:test")
+    mock_client = Mock()
+    mock_client.get_secret_value.side_effect = RuntimeError("throttled")
+    with (
+        patch("github_app.credentials.boto3.client", return_value=mock_client),
+        pytest.raises(CredentialsError, match="throttled"),
+    ):
+        get_credentials()

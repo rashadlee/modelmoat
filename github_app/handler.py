@@ -16,7 +16,7 @@ from pathlib import Path
 
 from github_app.auth import build_jwt
 from github_app.comments import classify_findings, summary_body
-from github_app.credentials import get_credentials
+from github_app.credentials import CredentialsError, get_credentials
 from github_app.diff import added_lines_by_file
 from github_app.events import relevant_pull_request
 from github_app.installation import GitHubAppAPIError, exchange_installation_token
@@ -47,7 +47,11 @@ def lambda_handler(event: dict, context) -> dict:
         else raw_body.encode("utf-8")
     )
 
-    credentials = get_credentials()
+    try:
+        credentials = get_credentials()
+    except CredentialsError as exc:
+        return _response(502, f"could not fetch credentials: {exc}")
+
     if not verify_signature(
         body_bytes, headers.get("x-hub-signature-256"), credentials["GITHUB_WEBHOOK_SECRET"]
     ):
