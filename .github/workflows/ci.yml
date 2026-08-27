@@ -27,7 +27,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check modelmoat tests scripts
+        run: ruff check modelmoat tests scripts github_app
 
       - name: Unit and fixture tests
         run: pytest -q
