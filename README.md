@@ -279,9 +279,12 @@ to look, not verdicts.
 
 ## Roadmap
 
+![modelmoat roadmap: coming next](assets/roadmap.svg)
+
 Azure AI and Vertex AI resources, ECS task definitions carrying self-hosted
-vector stores, and correlating an unauthenticated vector store with proof that
-it is publicly reachable.
+vector stores, correlating an unauthenticated vector store with proof that it
+is publicly reachable, and a GitHub App for native pull request comments as an
+alternative to wiring up the `--sarif` upload step by hand.
 
 Pinecone and Weaviate were on this list as "providers" and shipped as something
 else, because that framing did not survive contact with the registry. There is
