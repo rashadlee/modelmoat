@@ -1,25 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="270" viewBox="0 0 1000 270" fill="none" role="img" aria-label="modelmoat roadmap, coming next: Azure AI resources, Vertex AI resources, ECS task definitions carrying self-hosted vector stores, a GitHub App for native pull request comments, and correlating an unauthenticated vector store with proof of public reachability.">
-  <rect width="1000" height="270" fill="#292929"></rect>
+  <rect width="1000" height="270" rx="20" fill="#292929"></rect>
   <g font-family="'Geist Mono','SFMono-Regular',Menlo,Consolas,monospace">
 
     <text x="60" y="56" font-size="12" letter-spacing="1.6" fill="#608ab1">COMING NEXT</text>
+    <rect x="60" y="66" width="40" height="1" fill="#444644"></rect>
 
     <g font-size="16" fill="#c5c8c6">
-      <rect x="60" y="82" width="9" height="9" fill="#608ab1"></rect>
-      <text x="80" y="91">Azure AI resources</text>
+      <rect x="60" y="84" width="9" height="9" fill="#608ab1"></rect>
+      <text x="80" y="93">Azure AI resources</text>
 
-      <rect x="60" y="118" width="9" height="9" fill="#608ab1"></rect>
-      <text x="80" y="127">Vertex AI resources</text>
+      <rect x="60" y="120" width="9" height="9" fill="#608ab1"></rect>
+      <text x="80" y="129">Vertex AI resources</text>
 
-      <rect x="60" y="154" width="9" height="9" fill="#608ab1"></rect>
-      <text x="80" y="163">ECS task definitions carrying self-hosted vector stores</text>
+      <rect x="60" y="156" width="9" height="9" fill="#608ab1"></rect>
+      <text x="80" y="165">ECS task definitions carrying self-hosted vector stores</text>
 
-      <rect x="60" y="190" width="9" height="9" fill="#608ab1"></rect>
-      <text x="80" y="199">A GitHub App for native pull request comments</text>
+      <rect x="60" y="192" width="9" height="9" fill="#608ab1"></rect>
+      <text x="80" y="201">A GitHub App for native pull request comments</text>
 
-      <rect x="60" y="226" width="9" height="9" fill="#608ab1"></rect>
-      <text x="80" y="235">Correlating an unauthenticated vector store with proof</text>
-      <text x="80" y="257">of public reachability</text>
+      <rect x="60" y="228" width="9" height="9" fill="#608ab1"></rect>
+      <text x="80" y="237">Correlating an unauthenticated vector store with proof of public reachability</text>
     </g>
   </g>
 </svg>
