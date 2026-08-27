@@ -103,9 +103,8 @@ output kept a wrong number after fixtures changed.
    yourself. Revisit only if that tradeoff changes - e.g. other contributors
    show up, or PR-gated CI checks become worth having.
 
-8. **If the repo is still private:** the images and CI badge in the README
-   will not render on GitHub for anyone without repo access, and image paths
-   need to stay relative for the same reason (see the comment at the top of
-   README.md). If the repo is public, switch those to absolute
-   `raw.githubusercontent.com` URLs before or as part of this release, so
-   they also render correctly on the PyPI project page.
+8. **Any new image in the README** (screenshot, banner, roadmap) needs an
+   absolute `raw.githubusercontent.com` URL pinned to `master`, not a
+   relative path - see the comment at the top of README.md. Relative paths
+   render fine on GitHub but show as broken images on PyPI, since PyPI's
+   long_description has no access to the rest of the repo tree.
