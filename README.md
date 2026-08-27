@@ -1,9 +1,11 @@
-![modelmoat](assets/banner/modelmoat-banner.png)
+![modelmoat](assets/banner/modelmoat-banner.svg)
 
-[![PyPI](https://img.shields.io/pypi/v/modelmoat.svg?cacheSeconds=3600)](https://pypi.org/project/modelmoat/)
-[![Python versions](https://img.shields.io/pypi/pyversions/modelmoat.svg)](https://pypi.org/project/modelmoat/)
-[![License](https://img.shields.io/pypi/l/modelmoat.svg)](LICENSE)
-[![CI](https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://pypi.org/project/modelmoat/"><img src="https://img.shields.io/pypi/v/modelmoat.svg?cacheSeconds=3600" alt="PyPI"></a>
+  <a href="https://pypi.org/project/modelmoat/"><img src="https://img.shields.io/pypi/pyversions/modelmoat.svg" alt="Python versions"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/pypi/l/modelmoat.svg" alt="License"></a>
+  <a href="https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml"><img src="https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+</p>
 
 <!-- NOTE: the repo is currently private, so this file uses relative image paths
    (they render on GitHub for anyone with repo access; absolute URLs don't,
@@ -13,7 +15,7 @@
    unauthenticated requests to private repos. Check it once public.
    Before making the repo public or publishing a new PyPI version, switch the
    banner and screenshot image paths below to absolute GitHub raw URLs, e.g.:
-   https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/banner/modelmoat-banner.png
+   https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/banner/modelmoat-banner.svg
    Relative paths render fine on GitHub but show as broken images on PyPI,
    which has no access to the rest of the repo tree. -->
 
