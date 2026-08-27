@@ -8,11 +8,23 @@ true), and headers arrive in event["headers"], lowercased.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import json
 import os
+import shutil
+from pathlib import Path
 
+from github_app.auth import build_jwt
+from github_app.comments import classify_findings, summary_body
+from github_app.diff import added_lines_by_file
 from github_app.events import relevant_pull_request
+from github_app.installation import GitHubAppAPIError, exchange_installation_token
+from github_app.post_results import post_review_comments, post_summary_comment
+from github_app.pr_files import fetch_pr_files
 from github_app.signature import verify_signature
+from github_app.tree import TreeFetchError, fetch_terraform_tree
+from modelmoat.checks import ALL_CHECKS
+from modelmoat.scanner import Scanner
 
 
 def _response(status: int, message: str) -> dict:
@@ -47,9 +59,41 @@ def lambda_handler(event: dict, context) -> dict:
     if target is None:
         return _response(200, "ignored")
 
-    # Scanning and comment posting are the next slice, not this one: fetch
-    # the full Terraform tree at target.head_sha via an installation token,
-    # run the same Scanner the CLI uses (never a diff-only scan), classify
-    # findings with github_app.comments, and post them through the GitHub
-    # API. Returning 202 here rather than pretending this is done.
-    return _response(202, f"accepted pull_request #{target.pr_number}, scan not yet wired up")
+    top = None
+    try:
+        jwt_token = build_jwt(os.environ["GITHUB_APP_ID"], os.environ["GITHUB_APP_PRIVATE_KEY"])
+        access = exchange_installation_token(jwt_token, target.installation_id)
+
+        # The full tree at head_sha, never just the files the PR touched -
+        # a bucket in s3.tf is only correctly evaluated with security.tf
+        # also present.
+        top = fetch_terraform_tree(access.token, target.repo_full_name, target.head_sha)
+        result = Scanner(ALL_CHECKS).scan([top])
+        # Findings carry the path they were scanned from, which is an
+        # absolute temp directory here - GitHub's diff paths are relative
+        # to the repo root, so findings need the same shape to match.
+        findings = [
+            dataclasses.replace(f, file_path=Path(f.file_path).relative_to(top).as_posix())
+            for f in result.findings
+        ]
+
+        pr_files = fetch_pr_files(access.token, target.repo_full_name, target.pr_number)
+        inline, summary = classify_findings(findings, added_lines_by_file(pr_files))
+
+        post_review_comments(
+            access.token, target.repo_full_name, target.pr_number, target.head_sha, inline
+        )
+        post_summary_comment(
+            access.token, target.repo_full_name, target.pr_number, summary_body(summary)
+        )
+    except (GitHubAppAPIError, TreeFetchError) as exc:
+        return _response(
+            502, f"upstream error scanning pull_request #{target.pr_number}: {exc}"
+        )
+    finally:
+        if top is not None:
+            shutil.rmtree(top.parent, ignore_errors=True)
+
+    return _response(
+        200, f"scanned pull_request #{target.pr_number}: {len(findings)} finding(s)"
+    )

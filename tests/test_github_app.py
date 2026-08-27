@@ -33,6 +33,7 @@ from github_app.installation import (
     exchange_installation_token,
     list_installations,
 )
+from github_app.post_results import post_review_comments, post_summary_comment
 from github_app.pr_files import fetch_pr_files
 from github_app.signature import verify_signature
 from github_app.tree import TreeFetchError, fetch_terraform_tree
@@ -282,12 +283,87 @@ def _lambda_event(body: dict, secret: str, event_name="pull_request", *, sign=Tr
     return {"headers": headers, "body": raw.decode(), "isBase64Encoded": False}
 
 
-def test_handler_accepts_a_valid_relevant_delivery(monkeypatch):
+def _stub_pipeline(monkeypatch, tf_tree_dir):
+    """Patch every network call handler.py makes, keep Scanner real.
+
+    build_jwt is not stubbed - it runs for real against the module's own
+    synthetic test keypair, proving the handler wires app_id/private_key
+    through correctly, not just that some string gets passed along.
+    """
+    monkeypatch.setenv("GITHUB_APP_ID", "4733233")
+    monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", _TEST_PRIVATE_KEY)
+    monkeypatch.setattr(
+        "github_app.handler.exchange_installation_token",
+        lambda jwt_token, installation_id: InstallationToken("ghs_fake", "2026-01-01T00:00:00Z"),
+    )
+    monkeypatch.setattr("github_app.handler.fetch_terraform_tree", lambda *a, **k: tf_tree_dir)
+    posted = {"review": None, "summary": None}
+    monkeypatch.setattr(
+        "github_app.handler.post_review_comments",
+        lambda token, repo, pr, sha, comments: posted.__setitem__("review", comments),
+    )
+    monkeypatch.setattr(
+        "github_app.handler.post_summary_comment",
+        lambda token, repo, pr, body: posted.__setitem__("summary", body),
+    )
+    return posted
+
+
+def test_handler_scans_the_real_tree_and_posts_an_inline_comment(monkeypatch, tmp_path):
+    # A brand new file the PR adds outright, so every line - including line
+    # 1, where S3-001 reports its finding - is genuinely part of the diff.
+    # Exercises classify_findings' real line-matching, not a stub.
+    top = tmp_path / "rashadlee-modelmoat-abc123"
+    top.mkdir()
+    (top / "s3.tf").write_text(
+        'resource "aws_s3_bucket" "datasets" {\n'
+        '  bucket = "datasets"\n'
+        '  acl    = "public-read"\n'
+        "}\n"
+    )
+    posted = _stub_pipeline(monkeypatch, top)
+    monkeypatch.setattr(
+        "github_app.handler.fetch_pr_files",
+        lambda *a, **k: [
+            {
+                "filename": "s3.tf",
+                "patch": (
+                    "@@ -0,0 +1,4 @@\n"
+                    '+resource "aws_s3_bucket" "datasets" {\n'
+                    '+  bucket = "datasets"\n'
+                    '+  acl    = "public-read"\n'
+                    "+}\n"
+                ),
+            }
+        ],
+    )
     monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
-    event = _lambda_event(_pr_payload(), "test-secret")
-    result = lambda_handler(event, None)
-    assert result["statusCode"] == 202
+
+    result = lambda_handler(_lambda_event(_pr_payload(), "test-secret"), None)
+
+    assert result["statusCode"] == 200
     assert "#7" in result["body"]
+    assert posted["review"] is not None and len(posted["review"]) == 1
+    assert posted["review"][0].file_path == "s3.tf"
+    assert not top.exists()  # cleaned up after the scan, not left on Lambda's disk
+
+
+def test_handler_returns_502_when_an_upstream_github_call_fails(monkeypatch, tmp_path):
+    top = tmp_path / "rashadlee-modelmoat-abc123"
+    top.mkdir()
+    posted = _stub_pipeline(monkeypatch, top)
+    monkeypatch.setattr(
+        "github_app.handler.fetch_pr_files",
+        lambda *a, **k: (_ for _ in ()).throw(GitHubAppAPIError("boom")),
+    )
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+
+    result = lambda_handler(_lambda_event(_pr_payload(), "test-secret"), None)
+
+    assert result["statusCode"] == 502
+    assert "#7" in result["body"]
+    assert posted["review"] is None and posted["summary"] is None
+    assert not top.exists()  # still cleaned up even though the pipeline failed
 
 
 def test_handler_rejects_an_invalid_signature(monkeypatch):
@@ -316,10 +392,15 @@ def test_handler_rejects_a_body_that_does_not_match_its_own_signature(monkeypatc
     assert result["statusCode"] == 401
 
 
-def test_handler_decodes_base64_body_before_verifying(monkeypatch):
+def test_handler_decodes_base64_body_before_verifying(monkeypatch, tmp_path):
     # Lambda base64-encodes the body for some content types; the signature
     # must be checked against the decoded bytes, not the base64 text.
+    top = tmp_path / "rashadlee-modelmoat-abc123"
+    top.mkdir()
+    _stub_pipeline(monkeypatch, top)
+    monkeypatch.setattr("github_app.handler.fetch_pr_files", lambda *a, **k: [])
     monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+
     raw = json.dumps(_pr_payload()).encode()
     event = {
         "headers": {
@@ -330,7 +411,7 @@ def test_handler_decodes_base64_body_before_verifying(monkeypatch):
         "isBase64Encoded": True,
     }
     result = lambda_handler(event, None)
-    assert result["statusCode"] == 202
+    assert result["statusCode"] == 200
 
 
 # --------------------------------------------------------------------- #
@@ -580,3 +661,64 @@ def test_fetch_pr_files_raises_on_a_non_200_response():
         pytest.raises(GitHubAppAPIError),
     ):
         fetch_pr_files("fake.token", "rashadlee/modelmoat", 42)
+
+
+# --------------------------------------------------------------------- #
+# post_results.post_review_comments / post_summary_comment              #
+# --------------------------------------------------------------------- #
+def test_post_review_comments_sends_a_comment_event_with_every_comment():
+    ok = _mock_response(200, {"id": 1})
+    comments = [
+        InlineComment("s3.tf", 3, "finding one"),
+        InlineComment("iam.tf", 7, "finding two"),
+    ]
+    with patch("github_app.post_results.requests.post", return_value=ok) as post:
+        post_review_comments("fake.token", "rashadlee/modelmoat", 42, "sha123", comments)
+    args, kwargs = post.call_args
+    assert args[0] == "https://api.github.com/repos/rashadlee/modelmoat/pulls/42/reviews"
+    assert kwargs["json"]["commit_id"] == "sha123"
+    assert kwargs["json"]["event"] == "COMMENT"
+    assert kwargs["json"]["comments"] == [
+        {"path": "s3.tf", "line": 3, "body": "finding one"},
+        {"path": "iam.tf", "line": 7, "body": "finding two"},
+    ]
+
+
+def test_post_review_comments_skips_the_request_when_there_are_no_comments():
+    with patch("github_app.post_results.requests.post") as post:
+        post_review_comments("fake.token", "rashadlee/modelmoat", 42, "sha123", [])
+    post.assert_not_called()
+
+
+def test_post_review_comments_raises_on_a_non_200_response():
+    denied = _mock_response(422, {"message": "Unprocessable Entity"})
+    comments = [InlineComment("s3.tf", 3, "finding")]
+    with (
+        patch("github_app.post_results.requests.post", return_value=denied),
+        pytest.raises(GitHubAppAPIError),
+    ):
+        post_review_comments("fake.token", "rashadlee/modelmoat", 42, "sha123", comments)
+
+
+def test_post_summary_comment_sends_the_body():
+    ok = _mock_response(201, {"id": 1})
+    with patch("github_app.post_results.requests.post", return_value=ok) as post:
+        post_summary_comment("fake.token", "rashadlee/modelmoat", 42, "summary text")
+    args, kwargs = post.call_args
+    assert args[0] == "https://api.github.com/repos/rashadlee/modelmoat/issues/42/comments"
+    assert kwargs["json"] == {"body": "summary text"}
+
+
+def test_post_summary_comment_skips_the_request_when_body_is_empty():
+    with patch("github_app.post_results.requests.post") as post:
+        post_summary_comment("fake.token", "rashadlee/modelmoat", 42, "")
+    post.assert_not_called()
+
+
+def test_post_summary_comment_raises_on_a_non_201_response():
+    denied = _mock_response(403, {"message": "forbidden"})
+    with (
+        patch("github_app.post_results.requests.post", return_value=denied),
+        pytest.raises(GitHubAppAPIError),
+    ):
+        post_summary_comment("fake.token", "rashadlee/modelmoat", 42, "summary text")
