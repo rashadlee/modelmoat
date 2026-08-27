@@ -16,6 +16,7 @@ from pathlib import Path
 
 from github_app.auth import build_jwt
 from github_app.comments import classify_findings, summary_body
+from github_app.credentials import get_credentials
 from github_app.diff import added_lines_by_file
 from github_app.events import relevant_pull_request
 from github_app.installation import GitHubAppAPIError, exchange_installation_token
@@ -46,8 +47,10 @@ def lambda_handler(event: dict, context) -> dict:
         else raw_body.encode("utf-8")
     )
 
-    secret = os.environ["GITHUB_WEBHOOK_SECRET"]
-    if not verify_signature(body_bytes, headers.get("x-hub-signature-256"), secret):
+    credentials = get_credentials()
+    if not verify_signature(
+        body_bytes, headers.get("x-hub-signature-256"), credentials["GITHUB_WEBHOOK_SECRET"]
+    ):
         return _response(401, "invalid signature")
 
     try:
@@ -61,7 +64,7 @@ def lambda_handler(event: dict, context) -> dict:
 
     top = None
     try:
-        jwt_token = build_jwt(os.environ["GITHUB_APP_ID"], os.environ["GITHUB_APP_PRIVATE_KEY"])
+        jwt_token = build_jwt(os.environ["GITHUB_APP_ID"], credentials["GITHUB_APP_PRIVATE_KEY"])
         access = exchange_installation_token(jwt_token, target.installation_id)
 
         # The full tree at head_sha, never just the files the PR touched -

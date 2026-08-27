@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from github_app.auth import build_jwt
 from github_app.comments import InlineComment, classify_findings, summary_body
+from github_app.credentials import get_credentials
 from github_app.diff import added_lines, added_lines_by_file
 from github_app.events import PullRequestTarget, relevant_pull_request
 from github_app.handler import lambda_handler
@@ -283,6 +284,16 @@ def _lambda_event(body: dict, secret: str, event_name="pull_request", *, sign=Tr
     return {"headers": headers, "body": raw.decode(), "isBase64Encoded": False}
 
 
+def _stub_credentials(monkeypatch, *, webhook_secret="test-secret", private_key=None):
+    monkeypatch.setattr(
+        "github_app.handler.get_credentials",
+        lambda: {
+            "GITHUB_WEBHOOK_SECRET": webhook_secret,
+            "GITHUB_APP_PRIVATE_KEY": private_key or _TEST_PRIVATE_KEY,
+        },
+    )
+
+
 def _stub_pipeline(monkeypatch, tf_tree_dir):
     """Patch every network call handler.py makes, keep Scanner real.
 
@@ -291,7 +302,7 @@ def _stub_pipeline(monkeypatch, tf_tree_dir):
     through correctly, not just that some string gets passed along.
     """
     monkeypatch.setenv("GITHUB_APP_ID", "4733233")
-    monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", _TEST_PRIVATE_KEY)
+    _stub_credentials(monkeypatch)
     monkeypatch.setattr(
         "github_app.handler.exchange_installation_token",
         lambda jwt_token, installation_id: InstallationToken("ghs_fake", "2026-01-01T00:00:00Z"),
@@ -337,7 +348,6 @@ def test_handler_scans_the_real_tree_and_posts_an_inline_comment(monkeypatch, tm
             }
         ],
     )
-    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
 
     result = lambda_handler(_lambda_event(_pr_payload(), "test-secret"), None)
 
@@ -356,7 +366,6 @@ def test_handler_returns_502_when_an_upstream_github_call_fails(monkeypatch, tmp
         "github_app.handler.fetch_pr_files",
         lambda *a, **k: (_ for _ in ()).throw(GitHubAppAPIError("boom")),
     )
-    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
 
     result = lambda_handler(_lambda_event(_pr_payload(), "test-secret"), None)
 
@@ -367,14 +376,14 @@ def test_handler_returns_502_when_an_upstream_github_call_fails(monkeypatch, tmp
 
 
 def test_handler_rejects_an_invalid_signature(monkeypatch):
-    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+    _stub_credentials(monkeypatch)
     event = _lambda_event(_pr_payload(), "wrong-secret")
     result = lambda_handler(event, None)
     assert result["statusCode"] == 401
 
 
 def test_handler_acknowledges_but_ignores_irrelevant_events(monkeypatch):
-    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+    _stub_credentials(monkeypatch)
     event = _lambda_event(_pr_payload(), "test-secret", event_name="push")
     result = lambda_handler(event, None)
     # 200, not a 4xx or 5xx - GitHub must not see this as a failed delivery
@@ -385,7 +394,7 @@ def test_handler_acknowledges_but_ignores_irrelevant_events(monkeypatch):
 def test_handler_rejects_a_body_that_does_not_match_its_own_signature(monkeypatch):
     # The signature must be verified before the body is trusted enough to
     # even parse as JSON, let alone act on. Simulates a tampered payload.
-    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+    _stub_credentials(monkeypatch)
     event = _lambda_event(_pr_payload(), "test-secret")
     event["body"] = event["body"].replace("opened", "reopened")
     result = lambda_handler(event, None)
@@ -399,7 +408,6 @@ def test_handler_decodes_base64_body_before_verifying(monkeypatch, tmp_path):
     top.mkdir()
     _stub_pipeline(monkeypatch, top)
     monkeypatch.setattr("github_app.handler.fetch_pr_files", lambda *a, **k: [])
-    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
 
     raw = json.dumps(_pr_payload()).encode()
     event = {
@@ -722,3 +730,42 @@ def test_post_summary_comment_raises_on_a_non_201_response():
         pytest.raises(GitHubAppAPIError),
     ):
         post_summary_comment("fake.token", "rashadlee/modelmoat", 42, "summary text")
+
+
+# --------------------------------------------------------------------- #
+# credentials.get_credentials                                           #
+# --------------------------------------------------------------------- #
+def _reset_credentials_cache():
+    import github_app.credentials as credentials_module
+
+    credentials_module._cached = None
+
+
+def test_get_credentials_fetches_and_parses_the_secret(monkeypatch):
+    _reset_credentials_cache()
+    monkeypatch.setenv("GITHUB_CREDENTIALS_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:1:secret:x")
+    mock_client = Mock()
+    mock_client.get_secret_value.return_value = {
+        "SecretString": json.dumps(
+            {"GITHUB_APP_PRIVATE_KEY": "pem-value", "GITHUB_WEBHOOK_SECRET": "whs-value"}
+        )
+    }
+    with patch("github_app.credentials.boto3.client", return_value=mock_client) as client_ctor:
+        result = get_credentials()
+    client_ctor.assert_called_once_with("secretsmanager")
+    mock_client.get_secret_value.assert_called_once_with(
+        SecretId="arn:aws:secretsmanager:us-east-1:1:secret:x"
+    )
+    assert result == {"GITHUB_APP_PRIVATE_KEY": "pem-value", "GITHUB_WEBHOOK_SECRET": "whs-value"}
+
+
+def test_get_credentials_caches_after_the_first_call(monkeypatch):
+    _reset_credentials_cache()
+    monkeypatch.setenv("GITHUB_CREDENTIALS_SECRET_ARN", "arn:test")
+    mock_client = Mock()
+    mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"a": "b"})}
+    with patch("github_app.credentials.boto3.client", return_value=mock_client):
+        first = get_credentials()
+        second = get_credentials()
+    assert first is second
+    assert mock_client.get_secret_value.call_count == 1

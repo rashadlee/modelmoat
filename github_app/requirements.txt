@@ -3,3 +3,8 @@
 # library or an HTTP client just to run `modelmoat scan`.
 PyJWT[crypto]>=2.8,<3
 requests>=2.31,<3
+# boto3 is preinstalled in every Lambda Python runtime - listed here only so
+# tests and local dev have it too. Do not bundle it into the deployment
+# zip; the runtime's own copy is what actually runs, and shipping a second
+# one risks a botocore version mismatch against what the runtime expects.
+boto3>=1.34
