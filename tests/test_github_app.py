@@ -11,7 +11,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import io
 import json
+import tarfile
 import time
 from unittest.mock import Mock, patch
 
@@ -32,6 +34,7 @@ from github_app.installation import (
     list_installations,
 )
 from github_app.signature import verify_signature
+from github_app.tree import TreeFetchError, fetch_terraform_tree
 from modelmoat.scanner import Finding
 
 
@@ -435,3 +438,100 @@ def test_list_installations_raises_on_a_non_200_response():
         pytest.raises(GitHubAppAPIError),
     ):
         list_installations("fake.jwt")
+
+
+# --------------------------------------------------------------------- #
+# tree.fetch_terraform_tree                                             #
+# --------------------------------------------------------------------- #
+def _build_tarball(files: dict[str, str]) -> bytes:
+    """Build an in-memory .tar.gz from {path: content}, matching GitHub's shape."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for path, content in files.items():
+            data = content.encode()
+            info = tarfile.TarInfo(name=path)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def test_fetch_terraform_tree_extracts_into_the_top_level_directory():
+    archive = _build_tarball(
+        {
+            "rashadlee-modelmoat-abc123/main.tf": 'resource "x" "y" {}',
+            "rashadlee-modelmoat-abc123/sub/other.tf": "# nested",
+        }
+    )
+    ok = Mock(status_code=200, content=archive)
+    with patch("github_app.tree.requests.get", return_value=ok):
+        top = fetch_terraform_tree("fake.token", "rashadlee/modelmoat", "abc123")
+    assert top.name == "rashadlee-modelmoat-abc123"
+    assert (top / "main.tf").read_text() == 'resource "x" "y" {}'
+    assert (top / "sub" / "other.tf").read_text() == "# nested"
+
+
+def test_fetch_terraform_tree_raises_on_a_non_200_response():
+    denied = Mock(status_code=404, text="Not Found")
+    with (
+        patch("github_app.tree.requests.get", return_value=denied),
+        pytest.raises(TreeFetchError),
+    ):
+        fetch_terraform_tree("fake.token", "rashadlee/modelmoat", "abc123")
+
+
+def test_fetch_terraform_tree_rejects_a_path_traversal_member():
+    # A member the safe _build_tarball helper above cannot express, since it
+    # always prefixes with a contained top-level directory name.
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        safe = tarfile.TarInfo(name="rashadlee-modelmoat-abc123/main.tf")
+        safe.size = 4
+        tar.addfile(safe, io.BytesIO(b"safe"))
+        evil = tarfile.TarInfo(name="../../etc/evil.tf")
+        evil.size = 4
+        tar.addfile(evil, io.BytesIO(b"evil"))
+    archive = buf.getvalue()
+
+    ok = Mock(status_code=200, content=archive)
+    with (
+        patch("github_app.tree.requests.get", return_value=ok),
+        pytest.raises(TreeFetchError, match="escapes"),
+    ):
+        fetch_terraform_tree("fake.token", "rashadlee/modelmoat", "abc123")
+
+
+def test_fetch_terraform_tree_rejects_unexpected_top_level_shape():
+    # Two top-level directories is not a shape GitHub's tarball ever
+    # actually produces, so it is treated as untrusted rather than guessed
+    # at (which one is "the real" root?).
+    archive = _build_tarball({"dir-one/a.tf": "a", "dir-two/b.tf": "b"})
+    ok = Mock(status_code=200, content=archive)
+    with (
+        patch("github_app.tree.requests.get", return_value=ok),
+        pytest.raises(TreeFetchError),
+    ):
+        fetch_terraform_tree("fake.token", "rashadlee/modelmoat", "abc123")
+
+
+def test_fetched_tree_is_directly_usable_by_the_real_scanner():
+    # Proves the extracted tree is not just structurally present but is
+    # actually readable by modelmoat's real scanning code, end to end.
+    archive = _build_tarball(
+        {
+            "rashadlee-modelmoat-abc123/s3.tf": (
+                'resource "aws_s3_bucket" "datasets" {\n'
+                '  bucket = "datasets"\n'
+                '  acl    = "public-read"\n'
+                "}\n"
+            ),
+        }
+    )
+    ok = Mock(status_code=200, content=archive)
+    with patch("github_app.tree.requests.get", return_value=ok):
+        top = fetch_terraform_tree("fake.token", "rashadlee/modelmoat", "abc123")
+
+    from modelmoat.checks import ALL_CHECKS
+    from modelmoat.scanner import Scanner
+
+    result = Scanner(ALL_CHECKS).scan([top])
+    assert any(f.check_id == "S3-001" for f in result.findings)
