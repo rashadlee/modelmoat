@@ -1,4 +1,4 @@
-![modelmoat](assets/banner/modelmoat-banner.svg)
+<p align="center"><img src="assets/banner/modelmoat-banner.svg" alt="modelmoat — dig a moat around your models" width="100%"></p>
 
 <p align="center">
   <a href="https://pypi.org/project/modelmoat/"><img src="https://img.shields.io/pypi/v/modelmoat.svg?cacheSeconds=3600" alt="PyPI"></a>
