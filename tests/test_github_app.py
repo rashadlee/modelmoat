@@ -12,12 +12,43 @@ import base64
 import hashlib
 import hmac
 import json
+import time
 
+import jwt
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+
+from github_app.auth import build_jwt
 from github_app.comments import InlineComment, classify_findings, summary_body
 from github_app.diff import added_lines, added_lines_by_file
 from github_app.events import PullRequestTarget, relevant_pull_request
 from github_app.handler import lambda_handler
 from github_app.signature import verify_signature
+
+
+def _generate_keypair() -> tuple[str, str]:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    public_pem = (
+        private_key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode()
+    )
+    return private_pem, public_pem
+
+
+# Generated once for the whole test run, not per test - key generation is
+# the slow part, and nothing here depends on a fresh key per test case.
+# Never the maintainer's real App key: that key is never read by tests.
+_TEST_PRIVATE_KEY, _TEST_PUBLIC_KEY = _generate_keypair()
 from modelmoat.scanner import Finding
 
 # Old file (3 lines):
@@ -289,3 +320,56 @@ def test_handler_decodes_base64_body_before_verifying(monkeypatch):
     }
     result = lambda_handler(event, None)
     assert result["statusCode"] == 202
+
+
+# --------------------------------------------------------------------- #
+# auth.build_jwt                                                        #
+# --------------------------------------------------------------------- #
+def _decode_ignoring_expiry(token: str) -> dict:
+    # These tests use a fixed, deliberately-in-the-past `now` so claim
+    # values are exact and reproducible. That makes the resulting token
+    # genuinely expired by the real clock, which is a property of the test
+    # setup, not something build_jwt got wrong - skip PyJWT's own (already
+    # well-tested) expiration check and just inspect the claims it computed.
+    return jwt.decode(
+        token, _TEST_PUBLIC_KEY, algorithms=["RS256"], options={"verify_exp": False}
+    )
+
+
+def test_build_jwt_claims_match_githubs_documented_requirements():
+    token = build_jwt("4733233", _TEST_PRIVATE_KEY, now=1_700_000_000)
+    decoded = _decode_ignoring_expiry(token)
+    assert decoded["iss"] == "4733233"
+    # iat backdated 60s per GitHub's own clock-skew guidance.
+    assert decoded["iat"] == 1_700_000_000 - 60
+    assert decoded["exp"] == decoded["iat"] + 9 * 60
+
+
+def test_build_jwt_lifetime_stays_under_githubs_ten_minute_cap():
+    # The hard requirement, independent of this module's own chosen margin.
+    token = build_jwt("4733233", _TEST_PRIVATE_KEY, now=1_700_000_000)
+    decoded = _decode_ignoring_expiry(token)
+    assert decoded["exp"] - decoded["iat"] <= 600
+
+
+def test_build_jwt_is_signed_with_rs256():
+    token = build_jwt("4733233", _TEST_PRIVATE_KEY, now=1_700_000_000)
+    assert jwt.get_unverified_header(token)["alg"] == "RS256"
+
+
+def test_build_jwt_rejects_verification_with_the_wrong_key():
+    _other_private, other_public = _generate_keypair()
+    token = build_jwt("4733233", _TEST_PRIVATE_KEY, now=1_700_000_000)
+    with pytest.raises(jwt.InvalidSignatureError):
+        jwt.decode(token, other_public, algorithms=["RS256"])
+
+
+def test_build_jwt_defaults_to_the_real_current_time():
+    before = int(time.time())
+    token = build_jwt("4733233", _TEST_PRIVATE_KEY)
+    after = int(time.time())
+    decoded = jwt.decode(token, _TEST_PUBLIC_KEY, algorithms=["RS256"])
+    # iat is backdated 60s from "now" by design; assert it lands in a sane
+    # window around the real clock rather than an exact second, since the
+    # test itself takes some non-zero time to run.
+    assert before - 61 <= decoded["iat"] <= after - 59
