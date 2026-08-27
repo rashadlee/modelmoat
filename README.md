@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/banner/modelmoat-banner.svg" alt="modelmoat — dig a moat around your models" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/banner/modelmoat-banner.svg" alt="modelmoat — dig a moat around your models" width="100%"></p>
 
 <p align="center">
   <a href="https://pypi.org/project/modelmoat/"><img src="https://img.shields.io/pypi/v/modelmoat.svg?cacheSeconds=3600" alt="PyPI"></a>
@@ -7,17 +7,12 @@
   <a href="https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml"><img src="https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
 </p>
 
-<!-- NOTE: the repo is currently private, so this file uses relative image paths
-   (they render on GitHub for anyone with repo access; absolute URLs don't,
-   since GitHub's image proxy can't fetch private content even for the owner).
-   The CI badge above is also likely broken until the repo is public and a
-   workflow run has completed on master - GitHub's badge endpoint 404s for
-   unauthenticated requests to private repos. Check it once public.
-   Before making the repo public or publishing a new PyPI version, switch the
-   banner and screenshot image paths below to absolute GitHub raw URLs, e.g.:
-   https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/banner/modelmoat-banner.svg
-   Relative paths render fine on GitHub but show as broken images on PyPI,
-   which has no access to the rest of the repo tree. -->
+<!-- Image paths in this file are absolute raw.githubusercontent.com URLs
+   pinned to master, not relative paths. Relative paths render fine on
+   GitHub but show as broken images on PyPI, which has no access to the
+   rest of the repo tree - this matters because README.md is also PyPI's
+   long_description. Keep new images (banner, screenshots, roadmap) on this
+   same absolute pattern. -->
 
 Static analysis for AI infrastructure security in Terraform. It reads your `.tf`
 files and finds the misconfigurations that show up specifically when teams ship
@@ -30,7 +25,7 @@ inference traffic that never touches your private network.
 > at and never contacts your AWS account, reads Terraform state, or touches
 > credentials. There is nothing to configure and nothing to authenticate.
 
-![modelmoat scanning insecure Terraform and reporting CRITICAL and HIGH findings](assets/screenshots/scan-insecure.svg)
+![modelmoat scanning insecure Terraform and reporting CRITICAL and HIGH findings](https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/screenshots/scan-insecure.svg)
 
 General IaC scanners check hundreds of AWS resource types and cover some of this
 ground. modelmoat is the one that treats AI infrastructure as its own category,
@@ -248,7 +243,7 @@ than hidden. Entries that no longer match anything are reported as prunable.
   clean pass on ten files of best-practice Terraform and a failing exit code
   on the insecure fixture.
 
-![modelmoat scanning correctly configured Terraform and reporting zero findings](assets/screenshots/scan-secure.svg)
+![modelmoat scanning correctly configured Terraform and reporting zero findings](https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/screenshots/scan-secure.svg)
 
 -----
 
@@ -281,7 +276,7 @@ to look, not verdicts.
 
 ## Roadmap
 
-![modelmoat roadmap: coming next](assets/roadmap.svg)
+![modelmoat roadmap: coming next](https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/roadmap.svg)
 
 Azure AI and Vertex AI resources, ECS task definitions carrying self-hosted
 vector stores, correlating an unauthenticated vector store with proof that it
