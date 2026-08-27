@@ -8,8 +8,16 @@ diffs and findings, before any of it depends on a live webhook or hosting.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
+
 from github_app.comments import InlineComment, classify_findings, summary_body
 from github_app.diff import added_lines, added_lines_by_file
+from github_app.events import PullRequestTarget, relevant_pull_request
+from github_app.handler import lambda_handler
+from github_app.signature import verify_signature
 from modelmoat.scanner import Finding
 
 # Old file (3 lines):
@@ -134,3 +142,150 @@ def test_summary_body_never_uses_an_em_dash():
     # House style, enforced everywhere else in this project.
     body = summary_body([_finding()])
     assert "—" not in body
+
+
+# --------------------------------------------------------------------- #
+# signature.verify_signature                                            #
+# --------------------------------------------------------------------- #
+def test_verify_signature_matches_githubs_own_documented_example():
+    # This exact secret, payload, and signature are GitHub's own worked
+    # example in their webhook validation docs - a real reference
+    # implementation, not a value this test made up and could get wrong
+    # in the same way twice.
+    secret = "It's a Secret to Everybody"
+    payload = b"Hello, World!"
+    signature = (
+        "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17"
+    )
+    assert verify_signature(payload, signature, secret) is True
+
+
+def test_verify_signature_rejects_wrong_secret_and_tampered_payload():
+    secret = "It's a Secret to Everybody"
+    payload = b"Hello, World!"
+    signature = (
+        "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17"
+    )
+    assert verify_signature(payload, signature, "wrong secret") is False
+    assert verify_signature(b"Hello, World?", signature, secret) is False
+
+
+def test_verify_signature_rejects_missing_or_malformed_header():
+    assert verify_signature(b"x", None, "secret") is False
+    assert verify_signature(b"x", "", "secret") is False
+    # sha1= was GitHub's legacy scheme; accepting it would downgrade security.
+    assert verify_signature(b"x", "sha1=deadbeef", "secret") is False
+
+
+def _sign(payload: bytes, secret: str) -> str:
+    digest = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
+
+
+# --------------------------------------------------------------------- #
+# events.relevant_pull_request                                          #
+# --------------------------------------------------------------------- #
+def _pr_payload(action="opened", **overrides):
+    payload = {
+        "action": action,
+        "installation": {"id": 42},
+        "repository": {"full_name": "rashadlee/modelmoat"},
+        "pull_request": {
+            "number": 7,
+            "head": {"sha": "abc123"},
+            "base": {"sha": "def456"},
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_relevant_pull_request_extracts_everything_needed_to_act():
+    target = relevant_pull_request("pull_request", _pr_payload())
+    assert target == PullRequestTarget(
+        installation_id=42,
+        repo_full_name="rashadlee/modelmoat",
+        pr_number=7,
+        head_sha="abc123",
+        base_sha="def456",
+    )
+
+
+def test_relevant_pull_request_ignores_non_pull_request_events():
+    assert relevant_pull_request("push", _pr_payload()) is None
+    assert relevant_pull_request(None, _pr_payload()) is None
+
+
+def test_relevant_pull_request_ignores_uninteresting_actions():
+    # closed/labeled/etc mean nothing changed that needs scanning.
+    assert relevant_pull_request("pull_request", _pr_payload(action="closed")) is None
+    assert relevant_pull_request("pull_request", _pr_payload(action="labeled")) is None
+
+
+def test_relevant_pull_request_treats_malformed_payload_as_not_relevant():
+    # Missing the installation key entirely, not just an empty one.
+    broken = _pr_payload()
+    del broken["installation"]
+    assert relevant_pull_request("pull_request", broken) is None
+
+
+# --------------------------------------------------------------------- #
+# handler.lambda_handler                                                #
+# --------------------------------------------------------------------- #
+def _lambda_event(body: dict, secret: str, event_name="pull_request", *, sign=True):
+    raw = json.dumps(body).encode()
+    headers = {"x-github-event": event_name}
+    if sign:
+        headers["x-hub-signature-256"] = _sign(raw, secret)
+    return {"headers": headers, "body": raw.decode(), "isBase64Encoded": False}
+
+
+def test_handler_accepts_a_valid_relevant_delivery(monkeypatch):
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+    event = _lambda_event(_pr_payload(), "test-secret")
+    result = lambda_handler(event, None)
+    assert result["statusCode"] == 202
+    assert "#7" in result["body"]
+
+
+def test_handler_rejects_an_invalid_signature(monkeypatch):
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+    event = _lambda_event(_pr_payload(), "wrong-secret")
+    result = lambda_handler(event, None)
+    assert result["statusCode"] == 401
+
+
+def test_handler_acknowledges_but_ignores_irrelevant_events(monkeypatch):
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+    event = _lambda_event(_pr_payload(), "test-secret", event_name="push")
+    result = lambda_handler(event, None)
+    # 200, not a 4xx or 5xx - GitHub must not see this as a failed delivery
+    # and retry it, since nothing about it was actually wrong.
+    assert result["statusCode"] == 200
+
+
+def test_handler_rejects_a_body_that_does_not_match_its_own_signature(monkeypatch):
+    # The signature must be verified before the body is trusted enough to
+    # even parse as JSON, let alone act on. Simulates a tampered payload.
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+    event = _lambda_event(_pr_payload(), "test-secret")
+    event["body"] = event["body"].replace("opened", "reopened")
+    result = lambda_handler(event, None)
+    assert result["statusCode"] == 401
+
+
+def test_handler_decodes_base64_body_before_verifying(monkeypatch):
+    # Lambda base64-encodes the body for some content types; the signature
+    # must be checked against the decoded bytes, not the base64 text.
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+    raw = json.dumps(_pr_payload()).encode()
+    event = {
+        "headers": {
+            "x-github-event": "pull_request",
+            "x-hub-signature-256": _sign(raw, "test-secret"),
+        },
+        "body": base64.b64encode(raw).decode(),
+        "isBase64Encoded": True,
+    }
+    result = lambda_handler(event, None)
+    assert result["statusCode"] == 202
