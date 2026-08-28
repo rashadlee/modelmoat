@@ -13,3 +13,4 @@ venv/
 .terraform/
 findings.json
 CLAUDE.md
+RELEASING.md
