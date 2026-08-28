@@ -47,7 +47,7 @@ def scan(path: Path):
 # --------------------------------------------------------------------- #
 def test_secure_stack_yields_zero_findings():
     result = scan(SECURE)
-    assert result.files_scanned >= 8
+    assert result.files_scanned >= 9
     assert result.parse_errors == []
     details = "\n".join(
         f"{f.severity} {f.check_id} {f.resource_type}.{f.resource_name}: {f.message}"
@@ -70,6 +70,7 @@ def test_every_check_fires_on_insecure_stack():
         "VEC-001",
         "VEC-002",
         "PIN-001",
+        "AZR-001",
     } <= ids
 
 
@@ -210,6 +211,49 @@ def test_weaviate_matching_is_whole_token_and_chart_scoped():
     named = {f.resource_name for f in scan(SECURE).findings}
     assert "unrelated_app" not in named, "another chart is not weaviate"
     assert "lookalike" not in named, "weaviatelike is not weaviate"
+
+
+# --------------------------------------------------------------------- #
+# AZR-001: Azure OpenAI network exposure                                #
+# --------------------------------------------------------------------- #
+def test_azure_openai_public_by_default_is_flagged():
+    hits = [f for f in scan(INSECURE).findings if f.check_id == "AZR-001"]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+    assert hits[0].resource_name == "exposed_openai"
+
+
+def test_azure_openai_private_network_access_stays_silent():
+    # public_network_access_enabled = false, the explicit opposite of the
+    # provider's own default.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "openai" not in named
+
+
+def test_azure_openai_network_acls_deny_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "openai_with_acl" not in named
+
+
+def test_azure_openai_non_ai_kind_stays_silent():
+    # A public ComputerVision account is a real generic-hygiene finding,
+    # but this check is specifically about AI service exposure - flagging
+    # it here would claim a broader scope than the check actually has.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "vision" not in named
+
+
+def test_truthy_or_absent_treats_boolean_false_as_false():
+    # Regression: an earlier version fell through every branch for a
+    # literal Python False and returned True, which meant an explicitly
+    # disabled setting still read as "enabled by default."
+    from modelmoat.graph import truthy_or_absent
+
+    assert truthy_or_absent(False) is False
+    assert truthy_or_absent(True) is True
+    assert truthy_or_absent(None) is True
+    assert truthy_or_absent("false") is False
+    assert truthy_or_absent("${var.public}") is False
 
 
 # --------------------------------------------------------------------- #

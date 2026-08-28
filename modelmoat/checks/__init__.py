@@ -1,5 +1,6 @@
 """Check registry."""
 
+from .azure_openai import AzureOpenAINetworkCheck
 from .datastores import VectorDataStoreCheck
 from .iam import AIServiceIAMCheck
 from .network import AIVPCEndpointCheck
@@ -16,4 +17,5 @@ ALL_CHECKS = [
     VectorDataStoreCheck(),
     WeaviateAnonymousAccessCheck(),
     PineconeOrgRoleCheck(),
+    AzureOpenAINetworkCheck(),
 ]

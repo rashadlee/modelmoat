@@ -115,6 +115,29 @@ def missing_or_false(value) -> bool:
     return False
 
 
+def truthy_or_absent(value) -> bool:
+    """True when a setting is absent or true - the inverse of missing_or_false.
+
+    Some provider arguments default to enabled when omitted, for example
+    azurerm_cognitive_account's public_network_access_enabled (defaults to
+    true per the azurerm provider docs). For those, absence is the risky
+    state, not presence. Unknowns still return False: modelmoat does not
+    flag what it cannot prove either way.
+    """
+    if value is None:
+        return True
+    if value is False:
+        return False
+    if value is True:
+        return True
+    if isinstance(value, str):
+        stripped = value.strip()
+        if "${" in stripped:
+            return False
+        return stripped.lower() != "false"
+    return True
+
+
 def ai_tokens_in(*texts: str) -> set[str]:
     """Whole-token AI/ML keyword matches across the given strings."""
     matched: set[str] = set()

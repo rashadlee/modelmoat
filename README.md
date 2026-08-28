@@ -112,6 +112,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | VEC-001 | OpenSearch, pgvector-capable Postgres, and AI-named ElastiCache missing encryption or network isolation | CRITICAL to LOW |
 | VEC-002 | Self-hosted Weaviate accepting unauthenticated requests, via a `helm_release` value or a container environment variable | HIGH |
 | PIN-001 | Pinecone `OrgOwner` granted at organization scope to a service account or API key | HIGH |
+| AZR-001 | Azure OpenAI / AI Services accounts reachable from the public internet, via `public_network_access_enabled` or a missing `network_acls` deny rule | HIGH |
 
 -----
 

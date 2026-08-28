@@ -2,6 +2,21 @@
 
 Notable changes to modelmoat. Versions follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+### Added
+
+- AZR-001 flags an `azurerm_cognitive_account` (Azure OpenAI or AI Services)
+  reachable from the public internet: `public_network_access_enabled`
+  defaults to `true` when omitted, so an account with no explicit setting is
+  exposed by default, and only a `network_acls` block with
+  `default_action = "Deny"` narrows that down. Scoped to `kind = "OpenAI"`
+  and `kind = "AIServices"`, not every Cognitive Services type. Every
+  request still requires an API key or Entra ID credential regardless of
+  network configuration, so the finding says this is network exposure, not
+  an unauthenticated endpoint - the same framing SMK-001 uses for the
+  equivalent SageMaker case.
+
 ## 0.2.1 - 2026-08-27
 
 ### Fixed
