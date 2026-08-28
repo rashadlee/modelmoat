@@ -79,8 +79,8 @@ Python 3.10 or newer.
 Real output from the test fixtures in this repo:
 
 ```
-modelmoat 0.2.1 scanned 7 Terraform file(s)
-  CRITICAL: 4  HIGH: 10  MEDIUM: 4  LOW: 3
+modelmoat 0.3.0 scanned 10 Terraform file(s)
+  CRITICAL: 5  HIGH: 13  MEDIUM: 4  LOW: 3
 
 CRITICAL S3-001  aws_s3_bucket.datasets
          tests/fixtures/insecure/s3_bad.tf:11

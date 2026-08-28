@@ -2,7 +2,7 @@
 
 Notable changes to modelmoat. Versions follow [semantic versioning](https://semver.org).
 
-## Unreleased
+## 0.3.0 - 2026-08-28
 
 ### Added
 
