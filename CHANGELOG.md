@@ -24,6 +24,17 @@ Notable changes to modelmoat. Versions follow [semantic versioning](https://semv
   rather than default, so the finding is CRITICAL: proven network
   reachability combined with proven absent authentication, not just
   exposure with a mandatory auth layer still in place.
+- GCP-001 flags a `google_vertex_ai_reasoning_engine` (Agent Engine) missing
+  either of two independent controls: a Private Service Connect
+  `network_attachment`, since the resource keeps default public network
+  access without one, or a CMEK `encryption_spec`, since there is no
+  Google-managed-key fallback to credit - the block is either present or
+  entirely absent. A resource missing both gets two findings with distinct
+  detail tokens, not one, so baselining either never silently suppresses
+  the other. Reaching the engine still requires standard Google Cloud IAM
+  authentication regardless of network configuration - Vertex AI has no
+  equivalent of Bedrock AgentCore's `authorizer_type = "NONE"` - so both
+  findings are HIGH, the same tier as SMK-001 and AZR-001, not CRITICAL.
 
 ## 0.2.1 - 2026-08-27
 

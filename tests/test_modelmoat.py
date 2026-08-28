@@ -47,7 +47,7 @@ def scan(path: Path):
 # --------------------------------------------------------------------- #
 def test_secure_stack_yields_zero_findings():
     result = scan(SECURE)
-    assert result.files_scanned >= 10
+    assert result.files_scanned >= 11
     assert result.parse_errors == []
     details = "\n".join(
         f"{f.severity} {f.check_id} {f.resource_type}.{f.resource_name}: {f.message}"
@@ -72,6 +72,7 @@ def test_every_check_fires_on_insecure_stack():
         "PIN-001",
         "AZR-001",
         "BRK-001",
+        "GCP-001",
     } <= ids
 
 
@@ -275,6 +276,31 @@ def test_agentcore_gateway_with_aws_iam_authorizer_stays_silent():
 def test_agentcore_gateway_unknown_authorizer_type_stays_silent():
     named = {f.resource_name for f in scan(SECURE).findings}
     assert "from_variable" not in named
+
+
+# --------------------------------------------------------------------- #
+# GCP-001: Vertex AI Reasoning Engine security controls                 #
+# --------------------------------------------------------------------- #
+def test_reasoning_engine_missing_both_controls_reports_two_findings():
+    # Independent problems need independent detail tokens, or baselining
+    # one would silently suppress the other - the exact bug that shaped
+    # VEC-001's fingerprint fix.
+    hits = [f for f in scan(INSECURE).findings if f.check_id == "GCP-001"]
+    assert len(hits) == 2
+    assert all(f.resource_name == "exposed_agent" for f in hits)
+    assert all(f.severity == "HIGH" for f in hits)
+    details = {f.detail for f in hits}
+    assert details == {"no_network_isolation", "no_cmek"}
+
+
+def test_reasoning_engine_fingerprints_are_distinct():
+    hits = [f for f in scan(INSECURE).findings if f.check_id == "GCP-001"]
+    assert len({f.fingerprint for f in hits}) == 2
+
+
+def test_reasoning_engine_with_psc_and_cmek_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "prod_agent" not in named
 
 
 # --------------------------------------------------------------------- #

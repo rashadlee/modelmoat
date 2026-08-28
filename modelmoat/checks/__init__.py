@@ -8,6 +8,7 @@ from .network import AIVPCEndpointCheck
 from .pinecone import PineconeOrgRoleCheck
 from .s3 import ModelArtifactBucketCheck
 from .sagemaker import SageMakerNetworkCheck
+from .vertex_ai import VertexAIReasoningEngineCheck
 from .weaviate import WeaviateAnonymousAccessCheck
 
 ALL_CHECKS = [
@@ -20,4 +21,5 @@ ALL_CHECKS = [
     PineconeOrgRoleCheck(),
     AzureOpenAINetworkCheck(),
     BedrockAgentCoreGatewayCheck(),
+    VertexAIReasoningEngineCheck(),
 ]
