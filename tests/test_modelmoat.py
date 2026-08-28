@@ -47,7 +47,7 @@ def scan(path: Path):
 # --------------------------------------------------------------------- #
 def test_secure_stack_yields_zero_findings():
     result = scan(SECURE)
-    assert result.files_scanned >= 9
+    assert result.files_scanned >= 10
     assert result.parse_errors == []
     details = "\n".join(
         f"{f.severity} {f.check_id} {f.resource_type}.{f.resource_name}: {f.message}"
@@ -71,6 +71,7 @@ def test_every_check_fires_on_insecure_stack():
         "VEC-002",
         "PIN-001",
         "AZR-001",
+        "BRK-001",
     } <= ids
 
 
@@ -254,6 +255,26 @@ def test_truthy_or_absent_treats_boolean_false_as_false():
     assert truthy_or_absent(None) is True
     assert truthy_or_absent("false") is False
     assert truthy_or_absent("${var.public}") is False
+
+
+# --------------------------------------------------------------------- #
+# BRK-001: Bedrock AgentCore gateway authentication                     #
+# --------------------------------------------------------------------- #
+def test_agentcore_gateway_with_no_authorizer_is_critical():
+    hits = [f for f in scan(INSECURE).findings if f.check_id == "BRK-001"]
+    assert len(hits) == 1
+    assert hits[0].severity == "CRITICAL"
+    assert hits[0].resource_name == "open_gateway"
+
+
+def test_agentcore_gateway_with_aws_iam_authorizer_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "authenticated_gateway" not in named
+
+
+def test_agentcore_gateway_unknown_authorizer_type_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "from_variable" not in named
 
 
 # --------------------------------------------------------------------- #

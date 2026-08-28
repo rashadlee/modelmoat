@@ -16,6 +16,14 @@ Notable changes to modelmoat. Versions follow [semantic versioning](https://semv
   network configuration, so the finding says this is network exposure, not
   an unauthenticated endpoint - the same framing SMK-001 uses for the
   equivalent SageMaker case.
+- BRK-001 flags an `aws_bedrockagentcore_gateway` with
+  `authorizer_type = "NONE"`, which disables authentication on the side
+  that faces calling agents. Unlike SMK-001 or AZR-001, this resource has
+  no fallback authentication when set to `NONE` - the default endpoint
+  sits on AWS's standard regional network path, and PrivateLink is opt-in
+  rather than default, so the finding is CRITICAL: proven network
+  reachability combined with proven absent authentication, not just
+  exposure with a mandatory auth layer still in place.
 
 ## 0.2.1 - 2026-08-27
 

@@ -1,6 +1,7 @@
 """Check registry."""
 
 from .azure_openai import AzureOpenAINetworkCheck
+from .bedrock_agentcore import BedrockAgentCoreGatewayCheck
 from .datastores import VectorDataStoreCheck
 from .iam import AIServiceIAMCheck
 from .network import AIVPCEndpointCheck
@@ -18,4 +19,5 @@ ALL_CHECKS = [
     WeaviateAnonymousAccessCheck(),
     PineconeOrgRoleCheck(),
     AzureOpenAINetworkCheck(),
+    BedrockAgentCoreGatewayCheck(),
 ]
