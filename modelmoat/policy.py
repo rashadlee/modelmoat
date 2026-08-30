@@ -122,23 +122,46 @@ def _wildcard_resource(resources) -> bool:
     return any(str(r).strip() == "*" for r in as_list(resources))
 
 
+def _matched_actions(actions, not_actions, matched: set[str]) -> None:
+    """Add wildcard AI grants found in `actions` to `matched` in place.
+
+    `NotAction` grants every action except the ones listed - on a resource
+    scope already judged broad enough to matter, that is a near-blanket
+    grant no static analyzer can prove excludes every AI service action, so
+    it is treated the same as a literal `Action = "*"` rather than silently
+    contributing nothing because there is no `Action` key to enumerate.
+    """
+    if actions is None and not_actions is not None:
+        matched.add("*")
+        return
+    for action in as_list(actions):
+        action_str = str(action).strip().lower()
+        if action_str == "*":
+            matched.add("*")
+            continue
+        service = action_str.split(":", 1)[0]
+        if action_str.endswith(":*") and service in AI_ACTION_PREFIXES:
+            matched.add(action_str)
+
+
 def wildcard_ai_grants(doc: dict) -> list[str]:
-    """Actions like bedrock:* or sagemaker:* granted on Resource "*"."""
+    """Actions like bedrock:* or sagemaker:* granted on a resource scope
+    broad enough to include them - Resource "*", or NotResource excluding
+    only a handful of ARNs from an otherwise universal grant.
+    """
     matched: set[str] = set()
     for statement in iter_statements(doc):
         if not _is_allow(statement):
             continue
         resources = statement.get("Resource", statement.get("resource"))
-        if not _wildcard_resource(resources):
+        not_resources = statement.get("NotResource", statement.get("notresource"))
+        if not _wildcard_resource(resources) and not_resources is None:
             continue
-        for action in as_list(statement.get("Action") or statement.get("action")):
-            action_str = str(action).strip().lower()
-            if action_str == "*":
-                matched.add("*")
-                continue
-            service = action_str.split(":", 1)[0]
-            if action_str.endswith(":*") and service in AI_ACTION_PREFIXES:
-                matched.add(action_str)
+        _matched_actions(
+            statement.get("Action", statement.get("action")),
+            statement.get("NotAction", statement.get("notaction")),
+            matched,
+        )
     return sorted(matched)
 
 
@@ -151,31 +174,39 @@ def statement_block_grants(data_config: dict) -> list[str]:
         effect = str(statement.get("effect", "Allow")).strip().lower()
         if effect != "allow":
             continue
-        if not _wildcard_resource(statement.get("resources")):
+        not_resources = statement.get("not_resources")
+        if not _wildcard_resource(statement.get("resources")) and not_resources is None:
             continue
-        for action in as_list(statement.get("actions")):
-            action_str = str(action).strip().lower()
-            if action_str == "*":
-                matched.add("*")
-                continue
-            service = action_str.split(":", 1)[0]
-            if action_str.endswith(":*") and service in AI_ACTION_PREFIXES:
-                matched.add(action_str)
+        _matched_actions(statement.get("actions"), statement.get("not_actions"), matched)
     return sorted(matched)
 
 
+_RAW_ACTION_WILDCARD = re.compile(r'"?action"?\s*[:=]\s*(\[\s*)?"\*"')
+
+
 def raw_wildcard_scan(value) -> list[str]:
-    """Conservative fallback when a policy string cannot be parsed."""
+    """Conservative fallback when a policy string cannot be parsed - most
+    often a jsonencode() call composed from merge()/concat() or similar,
+    which resolves at apply time but not statically.
+    """
     if not isinstance(value, str):
         return []
     lowered = value.lower()
     if '"*"' not in lowered:
         return []
-    return sorted(
-        f"{prefix}:*"
-        for prefix in AI_ACTION_PREFIXES
-        if f"{prefix}:*" in lowered
-    )
+
+    matched = {
+        f"{prefix}:*" for prefix in AI_ACTION_PREFIXES if f"{prefix}:*" in lowered
+    }
+
+    # A literal Action = "*" grants everything on its face, regardless of
+    # which AI service prefixes also happen to appear - a scan that only
+    # looked for those prefixes would miss the single broadest grant there
+    # is.
+    if _RAW_ACTION_WILDCARD.search(lowered):
+        matched.add("*")
+
+    return sorted(matched)
 
 
 def allows_public_principal(doc: dict) -> bool:
@@ -191,3 +222,78 @@ def allows_public_principal(doc: dict) -> bool:
             if any(str(p).strip() == "*" for p in as_list(aws)):
                 return True
     return False
+
+
+_VPC_RESTRICTING_CONDITION_KEYS = {"aws:sourcevpce", "aws:sourcevpc"}
+
+
+def _has_vpc_restricting_condition(statement: dict) -> bool:
+    from .graph import blocks  # local import avoids a cycle at module load
+
+    for condition in blocks(statement, "condition"):
+        variable = str(condition.get("variable", "")).strip().lower()
+        if variable in _VPC_RESTRICTING_CONDITION_KEYS:
+            return True
+    return False
+
+
+def statement_block_allows_public_principal(data_config: dict) -> bool:
+    """Same check as allows_public_principal, for a data.aws_iam_policy_document
+    config expressed as `principals` blocks rather than a JSON Principal key.
+
+    A `principals { identifiers = ["*"] }` statement gated by an
+    aws:SourceVpce/aws:SourceVpc condition is the standard way to restrict a
+    resource policy to a specific VPC endpoint - there is no principal-only
+    way to express that restriction in IAM, so it must be recognized here or
+    every VPC-endpoint-restricted document referenced this way would read as
+    public. This intentionally does not extend to inline JSON policies via
+    allows_public_principal - broader Condition handling there is a separate,
+    not-yet-addressed gap.
+    """
+    from .graph import blocks  # local import avoids a cycle at module load
+
+    for statement in blocks(data_config, "statement"):
+        effect = str(statement.get("effect", "Allow")).strip().lower()
+        if effect != "allow":
+            continue
+        if _has_vpc_restricting_condition(statement):
+            continue
+        for principal_block in blocks(statement, "principals"):
+            identifiers = principal_block.get("identifiers")
+            if any(str(p).strip() == "*" for p in as_list(identifiers)):
+                return True
+    return False
+
+
+def resolve_public_principal(policy_value, data_docs: dict, module) -> bool | None:
+    """Resolve a policy attribute to whether it grants a public principal,
+    following a reference to a data.aws_iam_policy_document in the same
+    module when the value is not inline JSON/jsonencode.
+
+    `data_docs` is keyed by `(module, label)`, matching how IAM-001 already
+    resolves data source references - a same-named document in an unrelated
+    directory must never stand in for the one actually referenced.
+
+    Returns None when the policy could not be resolved at all: modelmoat
+    does not flag what it cannot prove, but a caller must not read None as
+    "not public" either, since that would be proving safety it cannot back
+    up. Callers should fall back to their own conservative handling for the
+    unresolved case, the same way they already do for a policy that fails to
+    parse at all.
+    """
+    doc = parse_policy_document(policy_value)
+    if doc is not None:
+        return allows_public_principal(doc)
+
+    from .graph import extract_ref  # local import avoids a cycle at module load
+
+    label = extract_ref(policy_value, "data.aws_iam_policy_document") or extract_ref(
+        policy_value, "aws_iam_policy_document"
+    )
+    if not label:
+        return None
+
+    entry = data_docs.get((module, label))
+    if entry is None:
+        return None
+    return statement_block_allows_public_principal(entry.config)

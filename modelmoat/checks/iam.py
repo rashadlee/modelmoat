@@ -9,6 +9,8 @@ use the role so the blast radius is obvious.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from ..graph import ProjectGraph, Resource, extract_ref
 from ..policy import (
     parse_policy_document,
@@ -44,7 +46,13 @@ class AIServiceIAMCheck:
         }
 
         lambdas_by_role = self._lambdas_by_role(graph, role_by_declared_name)
-        data_docs = {d.name: d for d in graph.data_by_type("aws_iam_policy_document")}
+        # Keyed by (module, label): a data.aws_iam_policy_document with the
+        # same label in an unrelated directory must never resolve a
+        # reference here, or the wrong document's grants get checked - or
+        # missed - silently.
+        data_docs = {
+            (d.module, d.name): d for d in graph.data_by_type("aws_iam_policy_document")
+        }
 
         def resolve_role(value) -> str | None:
             label = extract_ref(value, "aws_iam_role")
@@ -65,7 +73,7 @@ class AIServiceIAMCheck:
 
         # Inline role policies.
         for policy in graph.by_type("aws_iam_role_policy"):
-            matched = self._grants(policy.config.get("policy"), data_docs)
+            matched = self._grants(policy.config.get("policy"), data_docs, policy.module)
             if not matched:
                 continue
             label = resolve_role(policy.config.get("role"))
@@ -97,7 +105,7 @@ class AIServiceIAMCheck:
                     attached_roles_by_policy.setdefault(policy_label, set()).add(label)
 
         for policy in graph.by_type("aws_iam_policy"):
-            matched = self._grants(policy.config.get("policy"), data_docs)
+            matched = self._grants(policy.config.get("policy"), data_docs, policy.module)
             if not matched:
                 continue
             attached = sorted(attached_roles_by_policy.get(policy.name, set()))
@@ -150,7 +158,12 @@ class AIServiceIAMCheck:
                 mapping.setdefault(label, []).append(function.name)
         return mapping
 
-    def _grants(self, policy_value, data_docs: dict[str, Resource]) -> list[str]:
+    def _grants(
+        self,
+        policy_value,
+        data_docs: dict[tuple[Path, str], Resource],
+        module: Path,
+    ) -> list[str]:
         doc = parse_policy_document(policy_value)
         if doc is not None:
             return wildcard_ai_grants(doc)
@@ -158,8 +171,8 @@ class AIServiceIAMCheck:
         data_label = extract_ref(policy_value, "data.aws_iam_policy_document") or extract_ref(
             policy_value, "aws_iam_policy_document"
         )
-        if data_label and data_label in data_docs:
-            return statement_block_grants(data_docs[data_label].config)
+        if data_label and (module, data_label) in data_docs:
+            return statement_block_grants(data_docs[(module, data_label)].config)
 
         return raw_wildcard_scan(policy_value)
 

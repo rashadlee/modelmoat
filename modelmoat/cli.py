@@ -118,8 +118,30 @@ def scan(
         bool,
         typer.Option(
             "--fail-on-parse-error",
-            help="Exit non-zero if any file could not be parsed. Off by default, "
-            "so unsupported HCL does not break a build.",
+            help="Exit non-zero if any file could not be parsed in human-readable "
+            "output. Off by default there, so unsupported HCL does not break an "
+            "interactive run. --json and --sarif fail closed on parse errors "
+            "regardless of this flag - see --allow-partial.",
+        ),
+    ] = False,
+    allow_partial: Annotated[
+        bool,
+        typer.Option(
+            "--allow-partial",
+            help="Exit 0 despite parse errors, even for --json, --sarif, and "
+            "--write-baseline. Off by default: a scan that could not read every "
+            "file must not look identical to a clean, complete one in CI or in a "
+            "baseline.",
+        ),
+    ] = False,
+    allow_empty: Annotated[
+        bool,
+        typer.Option(
+            "--allow-empty",
+            help="Allow a scan that found no supported Terraform files to exit 0. "
+            "Off by default: an empty result usually means .tf.json files were "
+            "missed or the wrong path was given, and that must not look the same "
+            "as a scan that actually found clean infrastructure.",
         ),
     ] = False,
 ) -> None:
@@ -138,6 +160,32 @@ def scan(
     fail_on = _validate_severity(fail_on, "--fail-on")
 
     result = Scanner(ALL_CHECKS).scan(paths)
+
+    if result.files_scanned == 0 and not allow_empty:
+        error_console.print(
+            "[red]no supported Terraform files (.tf or .tf.json) found in the "
+            "given path(s)[/red]"
+        )
+        error_console.print("[dim]Pass --allow-empty if that is expected.[/dim]")
+        raise typer.Exit(code=2)
+
+    # A baseline recorded from an incomplete scan would permanently accept
+    # whatever was missed as if it had been reviewed, so refuse unless the
+    # caller explicitly opts into a partial one.
+    if write_baseline_to is not None and result.parse_errors and not allow_partial:
+        error_console.print(
+            "[red]refusing to write a baseline: "
+            f"{len(result.parse_errors)} file(s) could not be parsed[/red]"
+        )
+        for parse_error in result.parse_errors:
+            error_console.print(
+                f"[yellow]warning:[/yellow] could not parse "
+                f"{parse_error['file']}: {parse_error['error']}"
+            )
+        error_console.print(
+            "[dim]Pass --allow-partial to record a baseline anyway.[/dim]"
+        )
+        raise typer.Exit(code=2)
 
     # Writing a baseline is an adoption step, not a verdict. It exits 0 even
     # when findings exist, so turning the tool on does not break the build in
@@ -181,11 +229,14 @@ def scan(
 
     exit_code = 1 if result.max_rank() >= SEVERITY_RANK[fail_on] else 0
 
-    # A file modelmoat could not read is scanned by nobody, and by default that
-    # is reported as a warning rather than a failure so unsupported HCL does not
-    # break a build. Teams that would rather not have a corrupt file look
-    # identical to clean infrastructure can opt into failing.
-    if fail_on_parse_error and result.parse_errors:
+    # A file modelmoat could not read is scanned by nobody. Machine output
+    # (--json, --sarif) feeds CI and code-scanning pipelines directly, so a
+    # partial scan there must not look identical to a clean, complete one -
+    # it fails closed by default. Human-readable output stays a warning by
+    # default, for an interactive run where unsupported HCL should not be a
+    # surprise build break; --fail-on-parse-error opts that mode in too.
+    # --allow-partial overrides either direction.
+    if result.parse_errors and not allow_partial and (fail_on_parse_error or json_out or sarif_out):
         exit_code = 1
 
     minimum = SEVERITY_RANK[min_severity]

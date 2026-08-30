@@ -132,6 +132,26 @@ def to_sarif(result: ScanResult, checks: Iterable[Check] | None = None) -> dict:
             }
         )
 
+    # A file modelmoat could not read is scanned by nobody. Without this, a
+    # partial scan's SARIF is indistinguishable from a clean, complete one in
+    # GitHub's Security tab - executionSuccessful and a notification per
+    # unreadable file make the gap visible to any SARIF consumer, not just
+    # modelmoat's own exit code.
+    notifications = [
+        {
+            "level": "error",
+            "message": {"text": f"could not parse {error['file']}: {error['error']}"},
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": Path(error["file"]).as_posix()}
+                    }
+                }
+            ],
+        }
+        for error in result.parse_errors
+    ]
+
     return {
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
@@ -145,6 +165,12 @@ def to_sarif(result: ScanResult, checks: Iterable[Check] | None = None) -> dict:
                         "rules": rules,
                     }
                 },
+                "invocations": [
+                    {
+                        "executionSuccessful": not result.parse_errors,
+                        "toolExecutionNotifications": notifications,
+                    }
+                ],
                 "results": results,
             }
         ],

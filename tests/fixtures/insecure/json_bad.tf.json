@@ -1,0 +1,15 @@
+{
+  "resource": {
+    "aws_s3_bucket": {
+      "json_training_data": {
+        "bucket": "acme-json-training-data"
+      }
+    },
+    "aws_s3_bucket_acl": {
+      "json_training_data": {
+        "bucket": "${aws_s3_bucket.json_training_data.id}",
+        "acl": "public-read"
+      }
+    }
+  }
+}

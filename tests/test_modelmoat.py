@@ -12,10 +12,13 @@ The two rules every check lives by:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
+import modelmoat.graph as graph_module
 from modelmoat.baseline import (
     BaselineError,
     apply_baseline,
@@ -24,7 +27,7 @@ from modelmoat.baseline import (
 )
 from modelmoat.checks import ALL_CHECKS
 from modelmoat.cli import app
-from modelmoat.graph import ai_tokens_in, unquote
+from modelmoat.graph import _read_terraform_file, ai_tokens_in, build_graph, unquote
 from modelmoat.policy import (
     parse_policy_document,
     risky_managed_policy,
@@ -173,6 +176,190 @@ def test_missing_access_block_is_low_not_critical():
     result = scan(INSECURE)
     weights = [f for f in result.findings if f.resource_name == "model_weights"]
     assert weights and all(f.severity == "LOW" for f in weights)
+
+
+def test_s3_defects_on_one_bucket_have_distinct_fingerprints():
+    # MM-03 regression: a public ACL, a wildcard-principal policy, and a
+    # weakened access block on the same bucket must not collapse onto one
+    # fingerprint - baselining the mildest would otherwise silently suppress
+    # the other two.
+    result = scan(INSECURE)
+    multi = [f for f in result.findings if f.resource_name == "multi_defect"]
+    assert {f.detail for f in multi} == {"public_acl", "public_policy", "weakened_pab"}
+    assert len({f.fingerprint for f in multi}) == len(multi) == 3
+
+    # All four S3-001 branches are represented across the fixture with
+    # distinct detail tokens.
+    s3_details = {f.detail for f in result.findings if f.check_id == "S3-001"}
+    assert s3_details == {"public_acl", "public_policy", "weakened_pab", "missing_pab"}
+
+    # SARIF preserves all three as separate results, not deduplicated.
+    run = to_sarif(result, ALL_CHECKS)["runs"][0]
+    multi_results = [
+        r for r in run["results"]
+        if r["properties"]["resource"] == "aws_s3_bucket.multi_defect"
+    ]
+    assert len(multi_results) == 3
+    assert len({r["partialFingerprints"]["modelmoatFindingV1"] for r in multi_results}) == 3
+
+
+def test_deployable_tf_json_is_not_silently_skipped():
+    # MM-06 regression: .tf.json is real, deployable Terraform - it must be
+    # parsed, not silently treated as an empty, clean target.
+    result = scan(INSECURE)
+    assert any(
+        f.check_id == "S3-001"
+        and f.resource_name == "json_training_data"
+        and f.severity == "CRITICAL"
+        for f in result.findings
+    )
+
+
+def test_module_boundaries_prevent_cross_module_correlation():
+    # MM-01 regression: two sibling modules can declare identically labeled
+    # resources for entirely different infrastructure. A protected bucket in
+    # one module must never suppress a public bucket's finding in another,
+    # whether the public module is scanned alone or as part of the whole
+    # repository.
+    module_boundary = FIXTURES / "module_boundary"
+    module_a = module_boundary / "module_a"
+
+    isolated = scan(module_a)
+    assert any(
+        f.check_id == "S3-001" and f.severity == "CRITICAL" and f.resource_name == "data"
+        for f in isolated.findings
+    )
+
+    repo_wide = scan(module_boundary)
+    critical = [
+        f
+        for f in repo_wide.findings
+        if f.check_id == "S3-001" and f.severity == "CRITICAL" and f.resource_name == "data"
+    ]
+    assert len(critical) == 1
+    assert critical[0].file_path.endswith("module_a/main.tf")
+    # module_b's identically labeled bucket is genuinely protected and must
+    # stay silent - the fix is about boundaries, not about matching harder.
+    assert not any(f.file_path.endswith("module_b/main.tf") for f in repo_wide.findings)
+
+
+# A risky resource's own unresolved cardinality must not make it invisible:
+# modelmoat cannot prove it is NOT deployed, so it stays in the graph and
+# gets evaluated as normal - only a literal, provably-zero count/for_each
+# excludes it.
+_RISKY_RESOURCE_CARDINALITY_CASES = [
+    ("count = 0", False),
+    ("for_each = {}", False),
+    ("for_each = toset([])", False),
+    ("count = 3", True),
+    ("count = var.enabled ? 1 : 0", True),
+]
+# A compensating control's unresolved cardinality must not credit it with
+# protecting anything: modelmoat cannot prove it exists, so only a
+# confirmed-present control (not absent, not unresolved) suppresses the
+# finding for the resource it claims to protect.
+_CONTROL_CARDINALITY_CASES = [
+    ("count = 0", False),
+    ("for_each = {}", False),
+    ("for_each = toset([])", False),
+    ("count = 3", True),
+    ("count = var.enabled ? 1 : 0", False),
+]
+_CARDINALITY_IDS = [
+    "count_zero",
+    "for_each_empty_map",
+    "for_each_empty_toset",
+    "count_positive",
+    "count_variable_unknown",
+]
+
+
+@pytest.mark.parametrize(
+    "clause,instantiated", _RISKY_RESOURCE_CARDINALITY_CASES, ids=_CARDINALITY_IDS
+)
+def test_cardinality_on_a_risky_resource(tmp_path, clause, instantiated):
+    # MM-02 regression: a risky resource Terraform provably creates zero
+    # instances of must not be flagged as though it were deployed - but
+    # unresolved cardinality (a variable-driven count/for_each) is not proof
+    # of absence either, so it must still be evaluated normally, not dropped
+    # from the graph.
+    (tmp_path / "main.tf").write_text(
+        f"""
+resource "aws_s3_bucket" "training_data" {{
+  bucket = "acme-cardinality-training-data"
+}}
+resource "aws_s3_bucket_acl" "training_data" {{
+  {clause}
+  bucket = aws_s3_bucket.training_data.id
+  acl    = "public-read"
+}}
+"""
+    )
+    fired = any(
+        f.check_id == "S3-001" and f.detail == "public_acl" for f in scan(tmp_path).findings
+    )
+    assert fired == instantiated
+
+
+@pytest.mark.parametrize(
+    "clause,instantiated", _CONTROL_CARDINALITY_CASES, ids=_CARDINALITY_IDS
+)
+def test_cardinality_on_a_compensating_control(tmp_path, clause, instantiated):
+    # MM-02 regression: a compensating control Terraform provably does not
+    # create - or whose cardinality is unresolvable - must not suppress the
+    # finding for the resource it claims to protect. Unlike the risky-resource
+    # case, unresolved here must NOT count as confirmed: modelmoat cannot
+    # prove the control exists, so it must not get to prove the bucket safe.
+    (tmp_path / "main.tf").write_text(
+        f"""
+resource "aws_s3_bucket" "training_data" {{
+  bucket = "acme-cardinality-training-data"
+}}
+resource "aws_s3_bucket_acl" "training_data" {{
+  bucket = aws_s3_bucket.training_data.id
+  acl    = "public-read"
+}}
+resource "aws_s3_bucket_public_access_block" "training_data" {{
+  {clause}
+  bucket                  = aws_s3_bucket.training_data.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}}
+"""
+    )
+    fired = any(
+        f.check_id == "S3-001" and f.detail == "public_acl" for f in scan(tmp_path).findings
+    )
+    # The control suppresses the finding only when it is confirmed
+    # instantiated; otherwise the bucket's real exposure must still surface.
+    assert fired == (not instantiated)
+
+
+def test_unresolved_cardinality_on_the_resource_itself_does_not_erase_it(tmp_path):
+    # Direct regression for a bug introduced by an earlier version of the
+    # MM-02 fix: a public bucket whose own count is unresolved (not proven
+    # zero) must still show up in the graph at all, not disappear as if it
+    # were the same as count = 0.
+    (tmp_path / "main.tf").write_text(
+        """
+resource "aws_s3_bucket" "training_data" {
+  count  = var.enable_bucket
+  bucket = "acme-cardinality-training-data"
+}
+resource "aws_s3_bucket_acl" "training_data" {
+  bucket = aws_s3_bucket.training_data.id
+  acl    = "public-read"
+}
+"""
+    )
+    graph = build_graph([tmp_path])
+    assert graph.parse_errors == []
+    assert any(r.type == "aws_s3_bucket" and r.name == "training_data" for r in graph.resources)
+    assert any(
+        f.check_id == "S3-001" and f.detail == "public_acl" for f in scan(tmp_path).findings
+    )
 
 
 def test_public_postgres_is_critical():
@@ -409,6 +596,331 @@ def test_findings_have_real_line_numbers():
 
 
 # --------------------------------------------------------------------- #
+# MM-07: referenced policy documents                                    #
+# --------------------------------------------------------------------- #
+def test_referenced_policy_documents_resolve_correctly_for_s3_and_opensearch(tmp_path):
+    # MM-07 regression: a bucket policy or OpenSearch access policy expressed
+    # as a data.aws_iam_policy_document reference must resolve to the same
+    # verdict an inline policy would - public fires Critical, an
+    # organization-restricted or VPC-endpoint-restricted document stays
+    # silent on public reachability.
+    (tmp_path / "main.tf").write_text(
+        """
+data "aws_iam_policy_document" "public" {
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "org_restricted" {
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::111122223333:root"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "vpce_restricted" {
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceVpce"
+      values   = ["vpce-0123456789abcdef0"]
+    }
+  }
+}
+
+resource "aws_s3_bucket" "public_training_data" {
+  bucket = "acme-public-referenced-training-data"
+}
+resource "aws_s3_bucket_policy" "public_training_data" {
+  bucket = aws_s3_bucket.public_training_data.id
+  policy = data.aws_iam_policy_document.public.json
+}
+
+resource "aws_s3_bucket" "org_training_data" {
+  bucket = "acme-org-referenced-training-data"
+}
+resource "aws_s3_bucket_policy" "org_training_data" {
+  bucket = aws_s3_bucket.org_training_data.id
+  policy = data.aws_iam_policy_document.org_restricted.json
+}
+
+resource "aws_s3_bucket" "vpce_training_data" {
+  bucket = "acme-vpce-referenced-training-data"
+}
+resource "aws_s3_bucket_policy" "vpce_training_data" {
+  bucket = aws_s3_bucket.vpce_training_data.id
+  policy = data.aws_iam_policy_document.vpce_restricted.json
+}
+
+resource "aws_opensearch_domain" "public_vectors" {
+  domain_name     = "acme-public-vectors"
+  access_policies = data.aws_iam_policy_document.public.json
+  encrypt_at_rest {
+    enabled = true
+  }
+  node_to_node_encryption {
+    enabled = true
+  }
+}
+
+resource "aws_opensearch_domain" "org_vectors" {
+  domain_name     = "acme-org-vectors"
+  access_policies = data.aws_iam_policy_document.org_restricted.json
+  encrypt_at_rest {
+    enabled = true
+  }
+  node_to_node_encryption {
+    enabled = true
+  }
+}
+
+resource "aws_opensearch_domain" "vpce_vectors" {
+  domain_name     = "acme-vpce-vectors"
+  access_policies = data.aws_iam_policy_document.vpce_restricted.json
+  encrypt_at_rest {
+    enabled = true
+  }
+  node_to_node_encryption {
+    enabled = true
+  }
+}
+"""
+    )
+    result = scan(tmp_path)
+
+    s3_public_policy = {
+        f.resource_name: f
+        for f in result.findings
+        if f.check_id == "S3-001" and f.detail == "public_policy"
+    }
+    assert "public_training_data" in s3_public_policy
+    assert s3_public_policy["public_training_data"].severity == "CRITICAL"
+    assert "org_training_data" not in s3_public_policy
+    assert "vpce_training_data" not in s3_public_policy
+
+    vec_public_policy = {
+        f.resource_name: f
+        for f in result.findings
+        if f.check_id == "VEC-001" and f.detail == "public_access_policy"
+    }
+    assert "public_vectors" in vec_public_policy
+    assert vec_public_policy["public_vectors"].severity == "CRITICAL"
+    assert "org_vectors" not in vec_public_policy
+    assert "vpce_vectors" not in vec_public_policy
+
+    # The restricted domains still register as HIGH ("no vpc_options") - the
+    # fix must stop overclaiming public reachability, not silence them.
+    restricted_details = {
+        f.resource_name: f.detail
+        for f in result.findings
+        if f.check_id == "VEC-001" and f.resource_name in {"org_vectors", "vpce_vectors"}
+    }
+    assert restricted_details == {"org_vectors": "no_vpc_options", "vpce_vectors": "no_vpc_options"}
+
+
+# --------------------------------------------------------------------- #
+# MM-08: NotAction / NotResource / composed policies                    #
+# --------------------------------------------------------------------- #
+def test_iam_inverse_and_composed_policies_are_detected(tmp_path):
+    # MM-08 regression: an IAM statement using NotAction or NotResource to
+    # express a near-blanket grant, a plain global Action wildcard, and an
+    # unparseable composed jsonencode() must all still be caught - not just
+    # the direct Action + Resource "*" shape.
+    (tmp_path / "main.tf").write_text(
+        """
+resource "aws_iam_role" "not_action_role" {
+  name = "not-action-role"
+}
+resource "aws_iam_role_policy" "not_action_grant" {
+  name = "not-action-grant"
+  role = aws_iam_role.not_action_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      NotAction = ["iam:DeleteRole"]
+      Resource  = "*"
+    }]
+  })
+}
+
+resource "aws_iam_role" "not_resource_role" {
+  name = "not-resource-role"
+}
+resource "aws_iam_role_policy" "not_resource_grant" {
+  name = "not-resource-grant"
+  role = aws_iam_role.not_resource_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect      = "Allow"
+      Action      = ["bedrock:*"]
+      NotResource = ["arn:aws:bedrock:us-east-1:123456789012:guardrail/excluded-one"]
+    }]
+  })
+}
+
+resource "aws_iam_role" "global_wildcard_role" {
+  name = "global-wildcard-role"
+}
+resource "aws_iam_role_policy" "global_wildcard_grant" {
+  name = "global-wildcard-grant"
+  role = aws_iam_role.global_wildcard_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "*"
+      Resource = "*"
+    }]
+  })
+}
+
+resource "aws_iam_role" "composed_role" {
+  name = "composed-role"
+}
+resource "aws_iam_role_policy" "composed_grant" {
+  name = "composed-grant"
+  role = aws_iam_role.composed_role.id
+  policy = jsonencode(merge(
+    {
+      Version = "2012-10-17"
+      Statement = [{
+        Effect   = "Allow"
+        Action   = "*"
+        Resource = "*"
+      }]
+    },
+    local.extra_statements
+  ))
+}
+"""
+    )
+    result = scan(tmp_path)
+    flagged = {f.resource_name for f in result.findings if f.check_id == "IAM-001"}
+    assert flagged == {
+        "not_action_grant",
+        "not_resource_grant",
+        "global_wildcard_grant",
+        "composed_grant",
+    }
+
+
+# --------------------------------------------------------------------- #
+# MM-09: symlink and special-file boundaries                           #
+# --------------------------------------------------------------------- #
+def test_outside_root_symlink_is_never_read(tmp_path):
+    # A symlinked .tf file must not let a scan escape the directory the
+    # caller actually asked to scan.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.tf").write_text(
+        'resource "aws_s3_bucket" "leaked" {\n'
+        '  bucket = "acme-leaked-training-data"\n'
+        "}\n"
+    )
+    scan_root = tmp_path / "scan_root"
+    scan_root.mkdir()
+    (scan_root / "linked.tf").symlink_to(outside / "secret.tf")
+
+    graph = build_graph([scan_root])
+    assert graph.files_scanned == 0
+    assert graph.resources == []
+
+
+def test_regular_file_symlink_inside_root_is_also_rejected(tmp_path):
+    # A symlink is rejected on principle, not just when it points outside the
+    # scan root - a same-directory symlink to an otherwise ordinary file must
+    # not be silently followed either.
+    scan_root = tmp_path / "scan_root"
+    scan_root.mkdir()
+    real = scan_root / "real.tf"
+    real.write_text('resource "aws_s3_bucket" "real" {\n  bucket = "b"\n}\n')
+    (scan_root / "linked.tf").symlink_to(real)
+
+    graph = build_graph([scan_root])
+    assert graph.files_scanned == 1
+    assert {r.file.name for r in graph.resources} == {"real.tf"}
+
+
+def test_special_file_is_rejected_not_read(tmp_path):
+    # A named pipe named like a Terraform file must not be treated as one -
+    # opening it for a blocking read with no writer on the other end is
+    # exactly the denial of service this guards against.
+    scan_root = tmp_path / "scan_root"
+    scan_root.mkdir()
+    os.mkfifo(scan_root / "special.tf")
+
+    graph = build_graph([scan_root])
+    assert graph.files_scanned == 1
+    assert graph.resources == []
+    assert len(graph.parse_errors) == 1
+    assert "not a regular file" in graph.parse_errors[0][1]
+
+
+def test_read_terraform_file_refuses_a_symlink_directly(tmp_path):
+    # Race attempt: even if some other code path handed a symlink straight to
+    # the reader - what a check-then-open race between discovery and read
+    # would produce - the open() call itself must still refuse to follow it.
+    # This atomicity, not the discovery-time check alone, is what actually
+    # closes the race.
+    real = tmp_path / "real.tf"
+    real.write_text('resource "aws_s3_bucket" "x" {\n  bucket = "y"\n}\n')
+    link = tmp_path / "link.tf"
+    link.symlink_to(real)
+
+    with pytest.raises(OSError):
+        _read_terraform_file(link)
+
+
+def test_oversized_file_is_rejected_before_full_read(tmp_path, monkeypatch):
+    monkeypatch.setattr(graph_module, "_MAX_FILE_BYTES", 10)
+    scan_root = tmp_path / "scan_root"
+    scan_root.mkdir()
+    (scan_root / "big.tf").write_text('resource "aws_s3_bucket" "x" {\n  bucket = "y"\n}\n')
+
+    graph = build_graph([scan_root])
+    assert graph.files_scanned == 1
+    assert graph.resources == []
+    assert len(graph.parse_errors) == 1
+    assert "byte" in graph.parse_errors[0][1]
+
+
+def test_total_project_byte_quota_is_enforced(tmp_path, monkeypatch):
+    monkeypatch.setattr(graph_module, "_MAX_TOTAL_BYTES", 50)
+    scan_root = tmp_path / "scan_root"
+    scan_root.mkdir()
+    for i in range(5):
+        (scan_root / f"file_{i}.tf").write_text(
+            f'resource "aws_s3_bucket" "b{i}" {{\n  bucket = "x{i}"\n}}\n'
+        )
+
+    graph = build_graph([scan_root])
+    assert graph.files_scanned == 5
+    assert any("quota" in message for _, message in graph.parse_errors)
+    assert len(graph.resources) < 5
+
+
+# --------------------------------------------------------------------- #
 # Units                                                                 #
 # --------------------------------------------------------------------- #
 def test_unquote_strips_hcl2_quote_wrapping():
@@ -630,13 +1142,61 @@ def test_baseline_reports_stale_entries(tmp_path):
 
 
 def test_baseline_flags_a_suppressed_finding_that_got_worse():
-    # The one way a baseline could hide something that now matters.
+    # MM-04 regression: a finding that got more severe than its baselined
+    # entry is no longer accepted risk, so it must land back in `active`
+    # (and therefore back in the exit code) rather than staying suppressed.
     finding = _finding(severity="CRITICAL")
     stale_entry = {finding.fingerprint: {"fingerprint": finding.fingerprint, "severity": "LOW"}}
 
     comparison = apply_baseline([finding], stale_entry)
-    assert comparison.active == []
+    assert comparison.active == [finding]
+    assert comparison.suppressed == []
     assert comparison.escalated == [(finding, "LOW")]
+
+
+def test_baseline_escalation_reenters_active_json_and_sarif(tmp_path):
+    # MM-04 regression: a finding baselined as Low/Medium hygiene that later
+    # became Critical must fail the build and still show up in JSON and
+    # SARIF output, not just print a stderr warning while everything else
+    # looks clean.
+    findings = scan(INSECURE).findings
+    escalated = next(
+        f for f in findings if f.check_id == "S3-001" and f.detail == "public_acl"
+    )
+    path = tmp_path / "baseline.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tool": "modelmoat",
+                "format": 1,
+                "findings": [
+                    {
+                        "fingerprint": escalated.fingerprint,
+                        "check_id": escalated.check_id,
+                        "severity": "LOW",
+                        "resource": f"{escalated.resource_type}.{escalated.resource_name}",
+                        "file_path": escalated.file_path,
+                    }
+                ],
+            }
+        )
+    )
+
+    runner = CliRunner()
+
+    dirty = runner.invoke(app, ["scan", str(INSECURE), "--baseline", str(path), "--json"])
+    assert dirty.exit_code == 1, dirty.output
+    payload = json.loads(dirty.stdout)
+    assert any(f["fingerprint"] == escalated.fingerprint for f in payload["findings"])
+
+    sarif = runner.invoke(app, ["scan", str(INSECURE), "--baseline", str(path), "--sarif"])
+    assert sarif.exit_code == 1
+    sarif_payload = json.loads(sarif.stdout)
+    fingerprints = {
+        r["partialFingerprints"]["modelmoatFindingV1"]
+        for r in sarif_payload["runs"][0]["results"]
+    }
+    assert escalated.fingerprint in fingerprints
 
 
 def test_baseline_without_severity_recorded_does_not_crash():
@@ -710,6 +1270,80 @@ def test_unparseable_file_warns_but_does_not_fail_by_default(tmp_path):
 
     payload = runner.invoke(app, ["scan", str(tmp_path), "--json"])
     assert json.loads(payload.stdout)["summary"]["parse_errors"] == 1
+
+
+def test_incomplete_scan_fails_closed_for_machine_output_and_baseline(tmp_path):
+    # MM-05 regression: malformed and unreadable input must not look like a
+    # clean, complete scan to CI, to a SARIF consumer, or to a recorded
+    # baseline - across human, JSON, SARIF, and baseline modes.
+    malformed = tmp_path / "malformed.tf"
+    malformed.write_text("this is not terraform {{{ [[[")
+    unreadable = tmp_path / "unreadable.tf"
+    unreadable.write_bytes(b"\xff\xfe\x00bad-utf8-\x80\x81")
+
+    runner = CliRunner()
+
+    # Human mode still just warns by default - unsupported HCL should not be
+    # a surprise interactive build break.
+    human = runner.invoke(app, ["scan", str(tmp_path)])
+    assert human.exit_code == 0
+    assert "could not parse" in human.output
+
+    # --json is machine output for CI: fails closed by default and still
+    # carries the diagnostics.
+    json_result = runner.invoke(app, ["scan", str(tmp_path), "--json"])
+    assert json_result.exit_code == 1
+    payload = json.loads(json_result.stdout)
+    assert payload["summary"]["parse_errors"] == 2
+
+    # --sarif: fails closed and encodes the failure for any SARIF consumer,
+    # not just modelmoat's own exit code.
+    sarif_result = runner.invoke(app, ["scan", str(tmp_path), "--sarif"])
+    assert sarif_result.exit_code == 1
+    sarif_payload = json.loads(sarif_result.stdout)
+    invocation = sarif_payload["runs"][0]["invocations"][0]
+    assert invocation["executionSuccessful"] is False
+    assert len(invocation["toolExecutionNotifications"]) == 2
+
+    # --allow-partial opts back into the lenient exit code for machine output.
+    lenient_json = runner.invoke(app, ["scan", str(tmp_path), "--json", "--allow-partial"])
+    assert lenient_json.exit_code == 0
+
+    # A baseline recorded from an incomplete scan would permanently accept
+    # whatever was missed as if it had been reviewed - refuse it.
+    baseline_path = tmp_path / "baseline.json"
+    refused = runner.invoke(
+        app, ["scan", str(tmp_path), "--write-baseline", str(baseline_path)]
+    )
+    assert refused.exit_code == 2
+    assert not baseline_path.exists()
+
+    allowed = runner.invoke(
+        app,
+        ["scan", str(tmp_path), "--write-baseline", str(baseline_path), "--allow-partial"],
+    )
+    assert allowed.exit_code == 0
+    assert baseline_path.exists()
+
+
+def test_empty_target_is_an_error_unless_allowed(tmp_path):
+    # MM-06 regression: a target with nothing to scan must not exit 0 and
+    # look like a clean scan by default - most often because .tf.json was
+    # missed or the wrong directory was given.
+    runner = CliRunner()
+
+    refused = runner.invoke(app, ["scan", str(tmp_path)])
+    assert refused.exit_code == 2
+    assert "no supported Terraform files" in refused.output
+
+    allowed = runner.invoke(app, ["scan", str(tmp_path), "--allow-empty"])
+    assert allowed.exit_code == 0
+
+    # A directory that exists and has files, just none of them Terraform -
+    # the wrong-directory case - hits the same gate.
+    (tmp_path / "README.md").write_text("# not terraform")
+    wrong_dir = runner.invoke(app, ["scan", str(tmp_path)])
+    assert wrong_dir.exit_code == 2
 
 
 def test_cli_baseline_errors_use_exit_code_two(tmp_path):
