@@ -79,7 +79,7 @@ Python 3.10 or newer.
 Real output from the test fixtures in this repo:
 
 ```
-modelmoat 0.4.0 scanned 15 Terraform file(s)
+modelmoat 0.4.2 scanned 15 Terraform file(s)
   CRITICAL: 12  HIGH: 19  MEDIUM: 6  LOW: 3
 
 CRITICAL S3-001  aws_s3_bucket.datasets

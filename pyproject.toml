@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "modelmoat"
-version = "0.4.0"
+version = "0.4.2"
 description = "Static analysis for AI infrastructure security in Terraform. Finds misconfigured SageMaker, Bedrock IAM, model artifact buckets, missing PrivateLink, and exposed vector databases before they deploy."
 readme = "README.md"
 requires-python = ">=3.10"

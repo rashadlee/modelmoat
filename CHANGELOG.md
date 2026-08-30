@@ -2,7 +2,7 @@
 
 Notable changes to modelmoat. Versions follow [semantic versioning](https://semver.org).
 
-## 0.4.0 - 2026-08-30
+## 0.4.2 - 2026-08-30
 
 ### Changed
 
@@ -125,6 +125,18 @@ the scanner's own detection integrity, fail-safety, and release pipeline -
 - A new release workflow builds once, attests build provenance, and
   publishes to PyPI through Trusted Publishing (OIDC) - no long-lived token
   stored anywhere.
+- The first two release attempts under this workflow (0.4.0, 0.4.1) each
+  failed at the build stage before anything reached PyPI - a locked
+  dependency (`rpds-py`) had silently dropped Python 3.10 support, and the
+  build job was missing the `id-token`/`attestations` permissions its own
+  provenance-attestation step needs. Neither is visible from `pyproject.toml`
+  or the package itself, only from the two now-abandoned tags. Both are
+  fixed, and both now have a check that would have caught them before a tag
+  was ever pushed: `scripts/check_lockfile_python_support.py` verifies every
+  locked package against every Python version this project claims to
+  support, and `test_every_job_has_the_permissions_its_own_actions_require`
+  statically checks each workflow job's permissions against what its own
+  steps actually require.
 
 ### Acknowledgments
 
