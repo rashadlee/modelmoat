@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).parent.parent
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 CI_WORKFLOW = WORKFLOWS_DIR / "ci.yml"
@@ -31,6 +33,19 @@ _WRITE_PERMISSION = re.compile(r"^\s*([a-z-]+):\s*write\s*$", re.MULTILINE)
 # persisting that attestation via Sigstore - neither is a repository content
 # mutation.
 _ALLOWED_WRITE_PERMISSIONS = {"id-token", "attestations"}
+
+# What each third-party action actually requires on the JOB that calls it,
+# per that action's own documentation - not a guess, and not satisfied by a
+# sibling job having the scope instead. This is the check that would have
+# caught the real bug it is named for: release.yml's build job called
+# actions/attest-build-provenance with only `contents: read`, and the
+# attestation step failed on the first real release attempt because
+# `id-token: write` and `attestations: write` were only ever granted to the
+# separate publish job.
+_ACTION_REQUIRED_PERMISSIONS = {
+    "actions/attest-build-provenance": {"id-token", "attestations"},
+    "pypa/gh-action-pypi-publish": {"id-token"},
+}
 
 
 def _all_workflows() -> list[Path]:
@@ -74,6 +89,37 @@ def test_ci_declares_restrictive_permissions():
             assert scope in _ALLOWED_WRITE_PERMISSIONS, (
                 f"{workflow.name} requests disallowed write scope '{scope}: write'"
             )
+
+
+def test_every_job_has_the_permissions_its_own_actions_require():
+    # GitHub Actions permissions are per-job, not per-workflow: a scope
+    # granted to one job (publish's id-token: write) does not extend to a
+    # step running in a different job (build's attest-build-provenance
+    # step), even in the same workflow file. Checking only that a scope
+    # exists SOMEWHERE in the file - what the write-scope allowlist test
+    # above does - cannot catch a scope granted to the wrong job. This
+    # parses each job's own step list and its own permissions block, and
+    # requires every action a job uses to have what it actually needs
+    # declared on that same job.
+    for workflow in _all_workflows():
+        doc = yaml.safe_load(workflow.read_text())
+        for job_name, job in (doc.get("jobs") or {}).items():
+            job_permissions = set(job.get("permissions") or {})
+            for step in job.get("steps") or []:
+                uses = step.get("uses")
+                if not uses:
+                    continue
+                action = uses.split("@", 1)[0]
+                required = _ACTION_REQUIRED_PERMISSIONS.get(action)
+                if not required:
+                    continue
+                missing = required - job_permissions
+                assert not missing, (
+                    f"{workflow.name}: job '{job_name}' uses {action}, which "
+                    f"requires {sorted(required)}, but this job's own "
+                    f"permissions block only grants {sorted(job_permissions)} "
+                    f"(missing {sorted(missing)})"
+                )
 
 
 def test_release_workflow_only_triggers_on_version_tags():

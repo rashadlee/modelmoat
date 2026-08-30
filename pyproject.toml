@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5", "jsonschema>=4.0", "build>=1.0"]
+dev = ["pytest>=8.0", "ruff>=0.5", "jsonschema>=4.0", "build>=1.0", "pyyaml>=6.0"]
 
 [project.scripts]
 modelmoat = "modelmoat.cli:main"
