@@ -1,0 +1,94 @@
+name: Release
+
+# Builds and publishes to PyPI on a version tag push. There is no long-lived
+# PyPI token anywhere in this repo or its secrets - publish authenticates via
+# PyPI's Trusted Publisher (OIDC) mechanism instead, scoped by PyPI itself to
+# this exact repo, workflow file, and environment. Nothing here can publish
+# a release unless that PyPI-side configuration already trusts it.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip==26.2.1
+          pip install --require-hashes -r .github/requirements-lock.txt
+          pip install --no-deps -e .
+
+      - name: Verify the tag matches pyproject.toml
+        # A tag pushed from the wrong commit, or after a forgotten version
+        # bump, must not silently publish a mismatched release.
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::tag v$tag_version does not match pyproject.toml version $pkg_version"
+            exit 1
+          fi
+
+      - name: Full verification (same gate as CI, plus the built wheel)
+        run: |
+          pytest -q
+          ruff check modelmoat tests scripts
+          modelmoat scan tests/fixtures/secure
+          if modelmoat scan tests/fixtures/insecure --json > /dev/null; then
+            echo "::error::expected a non-zero exit code on the insecure fixture"
+            exit 1
+          fi
+
+      # Built exactly once here. The publish job downloads and publishes
+      # these same files rather than rebuilding, so what gets attested and
+      # what gets published to PyPI are provably the same bytes.
+      - name: Build
+        run: python -m build
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "dist/*"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A protected GitHub environment requiring a reviewer before this job
+    # runs - configured once in Settings > Environments, not expressible in
+    # this file. The tag pattern this workflow triggers on should also be
+    # protected in Settings > Tags so only maintainers can push one.
+    environment: pypi
+    permissions:
+      id-token: write # required for PyPI Trusted Publishing - no token, no secret
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

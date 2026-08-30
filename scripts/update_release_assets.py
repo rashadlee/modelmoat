@@ -97,14 +97,62 @@ def render_scan(paths, out_name, curated_check_ids=None, prompt="modelmoat scan 
     return console, result
 
 
+def validate_before_writing(insecure_result, secure_result, curated_check_ids) -> list[str]:
+    """Everything that must be true before any release asset is written.
+
+    Returns the list of problems found (empty means clean to write) rather
+    than writing anything or raising itself, so this can be exercised
+    directly without touching disk or a real scan: a broken run must not
+    leave stale, wrong, or partially-updated release assets behind. A
+    secure-fixture regression used to be a warning the run still exited 0
+    after, screenshot and all; a check silently no longer firing on the
+    insecure fixture was never checked at all.
+    """
+    errors: list[str] = []
+    if secure_result.findings:
+        details = "\n".join(
+            f"    {f.severity} {f.check_id} {f.resource_type}.{f.resource_name}: "
+            f"{f.message}"
+            for f in secure_result.findings
+        )
+        errors.append(
+            f"the secure fixture produced {len(secure_result.findings)} finding(s), "
+            f"it must always be clean:\n{details}"
+        )
+    for check_id, resource_name in curated_check_ids:
+        if not any(
+            f.check_id == check_id and f.resource_name == resource_name
+            for f in insecure_result.findings
+        ):
+            errors.append(
+                f"expected {check_id} on resource '{resource_name}' in the insecure "
+                "fixture's results, but it was not there - a check may have regressed"
+            )
+    return errors
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    insecure_console, _insecure_result = render_scan(
+    curated_check_ids = [("S3-001", "datasets"), ("IAM-001", "full_access")]
+    insecure_console, insecure_result = render_scan(
         [Path("tests/fixtures/insecure")],
         "scan-insecure.svg",
-        curated_check_ids=[("S3-001", "datasets"), ("IAM-001", "full_access")],
+        curated_check_ids=curated_check_ids,
     )
+    secure_console, secure_result = render_scan(
+        [Path("tests/fixtures/secure")],
+        "scan-secure.svg",
+    )
+
+    errors = validate_before_writing(insecure_result, secure_result, curated_check_ids)
+
+    if errors:
+        print("release assets NOT written:", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        raise SystemExit(1)
+
     # Both export_text() and save_svg() clear the recorded buffer by default.
     # Each console here is used once, so there is nothing to protect by
     # clearing - pass clear=False on both or the second call silently exports
@@ -121,10 +169,6 @@ def main() -> None:
     )
     print(f"wrote {OUT_DIR / 'scan-insecure.svg'}")
 
-    secure_console, secure_result = render_scan(
-        [Path("tests/fixtures/secure")],
-        "scan-secure.svg",
-    )
     secure_console.save_svg(
         str(OUT_DIR / "scan-secure.svg"),
         title="modelmoat",
@@ -132,13 +176,6 @@ def main() -> None:
     )
     print(f"wrote {OUT_DIR / 'scan-secure.svg'}")
 
-    if secure_result.findings:
-        print(
-            f"\nWARNING: the secure fixture produced {len(secure_result.findings)} "
-            "finding(s). That fixture must always be clean; fix this before "
-            "releasing, do not just accept the new screenshot.",
-            file=sys.stderr,
-        )
     print("\n" + "=" * 70)
     print("Paste this into README.md's fenced code block under ## Usage,")
     print("replacing the existing 'Real output from the test fixtures' example:")
