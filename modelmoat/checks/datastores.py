@@ -6,6 +6,8 @@ plausibly holding AI data, and its messages never claim more than the
 configuration proves:
 
   OpenSearch domains       always in scope (the managed vector engine)
+  OpenSearch Serverless    always in scope (the same engine, opt-in reachable
+                            instead of exposed by default - see below)
   RDS instances/clusters   in scope when the engine is Postgres-family
                            (pgvector capable) or the name/tags are AI-related
   ElastiCache              in scope only when the name/tags are AI-related
@@ -13,9 +15,22 @@ configuration proves:
 Explicitly disabled settings (enabled = false) are treated exactly like
 missing ones, and values that come from variables are unknown and never
 flagged.
+
+OpenSearch Serverless has the opposite default from a classic domain:
+AWS requires encryption at rest for every collection (no finding is possible
+there) and a collection is unreachable until a network security policy
+explicitly grants access, so absence is safe and only an explicit
+AllowFromPublic = true on a collection-type rule is flagged. AWS's own docs
+state that public network access still leaves data access policies in
+control of reads and writes and that every request must be SigV4-signed
+regardless of network settings, so this is HIGH network exposure, the same
+tier as a classic domain with no vpc_options, never CRITICAL - there is no
+serverless equivalent of BRK-001's authorizer_type = "NONE" with no fallback.
 """
 
 from __future__ import annotations
+
+import json
 
 from ..graph import (
     ProjectGraph,
@@ -26,8 +41,42 @@ from ..graph import (
     missing_or_false,
     truthy,
 )
-from ..policy import allows_public_principal, parse_policy_document
+from ..policy import _hcl_object_to_json, allows_public_principal, parse_policy_document
 from ..scanner import Finding
+
+
+def _parse_network_policy(value) -> list | None:
+    """Parse an OpenSearch Serverless network policy into a list of rule objects.
+
+    Unlike an IAM policy document this is a JSON array at the top level, not
+    an object, so it mirrors policy.parse_policy_document's unwrapping (the
+    ${...} hcl2 wraps every function call in, then jsonencode(...) itself)
+    but checks for a list result instead of a dict. A value that still
+    contains an unresolved reference after unwrapping fails to parse as JSON
+    or as an HCL object literal and correctly falls through to None.
+    """
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if text.startswith("${") and text.endswith("}"):
+        text = text[2:-1].strip()
+    if text.startswith("jsonencode(") and text.endswith(")"):
+        text = text[len("jsonencode("):-1].strip()
+
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, list) else None
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    try:
+        parsed = json.loads(_hcl_object_to_json(text))
+        return parsed if isinstance(parsed, list) else None
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 
 class VectorDataStoreCheck:
@@ -37,6 +86,7 @@ class VectorDataStoreCheck:
     def run(self, graph: ProjectGraph) -> list[Finding]:
         findings: list[Finding] = []
         findings.extend(self._opensearch(graph))
+        findings.extend(self._opensearch_serverless(graph))
         findings.extend(self._rds(graph))
         findings.extend(self._elasticache(graph))
         return findings
@@ -132,6 +182,56 @@ class VectorDataStoreCheck:
                         "https://docs.aws.amazon.com/opensearch-service/latest/"
                         "developerguide/vpc.html",
                         detail="default_security_group",
+                    )
+                )
+
+        return findings
+
+    # ------------------------------------------------------------------ #
+    # OpenSearch Serverless                                               #
+    # ------------------------------------------------------------------ #
+    def _opensearch_serverless(self, graph: ProjectGraph) -> list[Finding]:
+        findings: list[Finding] = []
+
+        for policy in graph.by_type("aws_opensearchserverless_security_policy"):
+            if str(policy.config.get("type", "")).strip().lower() != "network":
+                continue
+
+            entries = _parse_network_policy(policy.config.get("policy"))
+            if entries is None:
+                continue
+
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("AllowFromPublic") is not True:
+                    continue
+                resource_types = {
+                    str(rule.get("ResourceType", "")).strip().lower()
+                    for rule in as_list(entry.get("Rules"))
+                    if isinstance(rule, dict)
+                }
+                if "collection" not in resource_types:
+                    continue
+
+                findings.append(
+                    self._finding(
+                        policy,
+                        "HIGH",
+                        f"OpenSearch Serverless network policy '{policy.name}' sets "
+                        "AllowFromPublic = true for a collection resource, so the "
+                        "matching collection's OpenSearch endpoint is reachable "
+                        "from the public internet. A data access policy and "
+                        "SigV4-signed IAM credentials are still required for "
+                        "every request regardless of network settings, so this "
+                        "is network exposure, not an unauthenticated endpoint.",
+                        "Set AllowFromPublic to false and add SourceVPCEs "
+                        "pointing at an OpenSearch Serverless-managed VPC "
+                        "endpoint, or SourceServices if only an AWS service "
+                        "such as Bedrock needs private access.",
+                        "https://docs.aws.amazon.com/opensearch-service/latest/"
+                        "developerguide/serverless-network.html",
+                        detail="serverless_network_public",
                     )
                 )
 

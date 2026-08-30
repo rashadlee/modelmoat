@@ -158,6 +158,28 @@ def test_public_postgres_is_critical():
     )
 
 
+def test_opensearch_serverless_public_network_policy_is_high():
+    # HIGH, not CRITICAL: AWS's own docs state that a data access policy and
+    # SigV4-signed IAM credentials are still required for every request
+    # regardless of AllowFromPublic, so this is network exposure, not the
+    # proven-absent-auth case BRK-001 covers.
+    hits = [f for f in scan(INSECURE).findings if f.check_id == "VEC-001"]
+    serverless = [f for f in hits if f.resource_name == "vectors_network"]
+    assert len(serverless) == 1
+    assert serverless[0].severity == "HIGH"
+    assert serverless[0].detail == "serverless_network_public"
+
+
+def test_opensearch_serverless_private_and_dashboard_only_stay_silent():
+    # A private network policy stays silent, and so does a policy that only
+    # grants public access to the Dashboards resource type: AWS's own docs
+    # say direct calls to the OpenSearch API still fail in that case, so
+    # flagging it would claim more than the configuration proves.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "vectors_network" not in named
+    assert "vectors_dashboard_only" not in named
+
+
 # --------------------------------------------------------------------- #
 # PIN-001 and VEC-002: vector stores outside AWS                        #
 # --------------------------------------------------------------------- #

@@ -18,3 +18,23 @@ resource "aws_elasticache_replication_group" "embeddings_cache" {
   replication_group_id = "embeddings-cache"
   description          = "vector cache"
 }
+resource "aws_opensearchserverless_collection" "vectors" {
+  name = "open-vectors-serverless"
+  type = "VECTORSEARCH"
+}
+resource "aws_opensearchserverless_security_policy" "vectors_network" {
+  name = "open-vectors-network"
+  type = "network"
+  policy = jsonencode([
+    {
+      Description = "public collection access"
+      Rules = [
+        {
+          ResourceType = "collection"
+          Resource     = ["collection/open-vectors-serverless"]
+        }
+      ]
+      AllowFromPublic = true
+    }
+  ])
+}
