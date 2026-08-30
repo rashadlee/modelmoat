@@ -179,6 +179,26 @@ def test_missing_access_block_is_low_not_critical():
     assert weights and all(f.severity == "LOW" for f in weights)
 
 
+def test_bucket_referenced_by_kb_data_source_is_flagged_despite_generic_name():
+    # "acme-prod-storage" matches no AI/ML keyword or tag - the only proof
+    # this bucket holds AI data is aws_bedrockagent_data_source pointing its
+    # s3_configuration.bucket_arn at it. Relevance through that reference
+    # must catch what keyword matching alone would miss.
+    result = scan(INSECURE)
+    hits = [f for f in result.findings if f.resource_name == "generic_storage"]
+    assert hits and all(f.check_id == "S3-001" for f in hits)
+    assert any(f.severity == "CRITICAL" and f.detail == "public_policy" for f in hits)
+    assert any("bedrockagent_data_source" in f.message for f in hits)
+
+
+def test_bucket_referenced_by_kb_data_source_but_locked_down_stays_silent():
+    # Same generic name and the same data source reference as the insecure
+    # case, but fully locked down - the new relevance signal must not turn
+    # into a false positive on its own.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "generic_storage" not in named
+
+
 def test_s3_defects_on_one_bucket_have_distinct_fingerprints():
     # MM-03 regression: a public ACL, a wildcard-principal policy, and a
     # weakened access block on the same bucket must not collapse onto one

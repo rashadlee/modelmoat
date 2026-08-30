@@ -1,8 +1,15 @@
 """S3-001: model artifact buckets and public exposure.
 
 Relevance uses whole-token matching on bucket labels, bucket names, and tag
-values, so 'email-archive' never matches 'ai'. Exposure is evidence-based
-and resolved across files:
+values, so 'email-archive' never matches 'ai' - plus one reference-based
+signal: a bucket named for the business, not the model (`acme-prod-storage`),
+is still provably AI-related when an aws_bedrockagent_data_source points its
+s3_configuration.bucket_arn at it. That is stronger evidence than a keyword
+guess, the same "prove it through the reference" approach AGW-001 uses for
+API Gateway integrations, so it is checked first and a match skips the
+keyword scan entirely rather than requiring both.
+
+Exposure is evidence-based and resolved across files:
 
   CRITICAL  a public-read ACL or a bucket policy with Principal "*"
   MEDIUM    an aws_s3_bucket_public_access_block with protections turned off
@@ -16,9 +23,16 @@ Block Public Access overrides ACLs and policies.
 
 from __future__ import annotations
 
-from ..graph import ProjectGraph, Resource, ai_tokens_in, extract_ref, truthy
+import re
+
+from ..graph import ProjectGraph, Resource, ai_tokens_in, extract_ref, first_block, truthy
 from ..policy import resolve_public_principal
 from ..scanner import Finding
+
+# aws_bedrockagent_data_source.s3_configuration.bucket_arn is a bucket ARN,
+# not a bucket name - arn:aws:s3:::name, no region or account segment. Only
+# the partition varies (aws, aws-cn, aws-us-gov).
+_ARN_BUCKET_NAME = re.compile(r"^arn:aws[a-z0-9-]*:s3:::([^/]+)")
 
 _DOCS = (
     "https://docs.aws.amazon.com/AmazonS3/latest/userguide/"
@@ -41,6 +55,7 @@ class ModelArtifactBucketCheck:
         findings: list[Finding] = []
 
         buckets = graph.by_type("aws_s3_bucket")
+        kb_data_sources = graph.by_type("aws_bedrockagent_data_source")
         # A public access block is a compensating control here - credited
         # with protecting a bucket only when its own cardinality is
         # confirmed, never when count/for_each on the block itself is
@@ -61,14 +76,21 @@ class ModelArtifactBucketCheck:
         }
 
         for bucket in buckets:
-            tags = bucket.config.get("tags") or {}
-            tag_values = [str(v) for v in tags.values()] if isinstance(tags, dict) else []
-            matched = ai_tokens_in(
-                bucket.name, str(bucket.config.get("bucket", "")), *tag_values
-            )
-            if not matched:
-                continue
-            matched_note = f"(matched: {', '.join(sorted(matched))})"
+            kb_refs = self._kb_data_source_refs(bucket, kb_data_sources)
+            if kb_refs:
+                ref_names = ", ".join(sorted(f"{ds.type}.{ds.name}" for ds in kb_refs))
+                relevance = (
+                    f"backs an Amazon Bedrock knowledge base as a data source ({ref_names})"
+                )
+            else:
+                tags = bucket.config.get("tags") or {}
+                tag_values = [str(v) for v in tags.values()] if isinstance(tags, dict) else []
+                matched = ai_tokens_in(
+                    bucket.name, str(bucket.config.get("bucket", "")), *tag_values
+                )
+                if not matched:
+                    continue
+                relevance = f"looks AI/ML related (matched: {', '.join(sorted(matched))})"
 
             related_blocks = self._related(bucket, access_blocks)
             fully_blocked = any(
@@ -91,8 +113,8 @@ class ModelArtifactBucketCheck:
                         self._finding(
                             bucket,
                             "CRITICAL",
-                            f"S3 bucket '{bucket.name}' looks AI/ML related "
-                            f"{matched_note} and declares ACL '{acl}'. Objects such as "
+                            f"S3 bucket '{bucket.name}' {relevance} and declares "
+                            f"ACL '{acl}'. Objects such as "
                             "training data or model weights would be readable by anyone.",
                             "Remove the public ACL and add an "
                             "aws_s3_bucket_public_access_block with all four protections "
@@ -119,10 +141,9 @@ class ModelArtifactBucketCheck:
                         self._finding(
                             bucket,
                             "CRITICAL",
-                            f"S3 bucket '{bucket.name}' looks AI/ML related "
-                            f"{matched_note} and its bucket policy allows "
-                            'Principal "*". Anyone on the internet can perform the '
-                            "granted actions.",
+                            f"S3 bucket '{bucket.name}' {relevance} and its "
+                            'bucket policy allows Principal "*". Anyone on the '
+                            "internet can perform the granted actions.",
                             "Restrict the policy principal to specific roles or "
                             "accounts and add an aws_s3_bucket_public_access_block "
                             "with all four protections enabled.",
@@ -143,10 +164,9 @@ class ModelArtifactBucketCheck:
                         self._finding(
                             bucket,
                             "MEDIUM",
-                            f"S3 bucket '{bucket.name}' looks AI/ML related "
-                            f"{matched_note} and its public access block leaves "
-                            f"{', '.join(disabled)} disabled, so public ACLs or "
-                            "policies could take effect.",
+                            f"S3 bucket '{bucket.name}' {relevance} and its "
+                            f"public access block leaves {', '.join(disabled)} "
+                            "disabled, so public ACLs or policies could take effect.",
                             "Set all four public access block arguments to true. They "
                             "default to false when omitted.",
                             "weakened_pab",
@@ -160,8 +180,8 @@ class ModelArtifactBucketCheck:
                     self._finding(
                         bucket,
                         "LOW",
-                        f"S3 bucket '{bucket.name}' looks AI/ML related "
-                        f"{matched_note} but no aws_s3_bucket_public_access_block "
+                        f"S3 bucket '{bucket.name}' {relevance} but no "
+                        "aws_s3_bucket_public_access_block "
                         "exists for it in the scanned files. Account defaults have "
                         "blocked public access on new buckets since April 2023, so "
                         "this is a hygiene gap rather than a confirmed exposure.",
@@ -191,6 +211,40 @@ class ModelArtifactBucketCheck:
             literal_match = isinstance(ref, str) and ref in (bucket.name, declared_name)
             if label == bucket.name or literal_match:
                 related.append(resource)
+        return related
+
+    def _kb_data_source_refs(
+        self, bucket: Resource, data_sources: list[Resource]
+    ) -> list[Resource]:
+        """aws_bedrockagent_data_source resources whose
+        data_source_configuration.s3_configuration.bucket_arn points at this
+        bucket, scoped to the same module the same way _related() is. This is
+        direct evidence of AI relevance through a reference, so it does not
+        depend on the bucket's name or tags matching anything.
+        """
+        related = []
+        declared_name = bucket.config.get("bucket")
+        for data_source in data_sources:
+            if data_source.module != bucket.module:
+                continue
+            s3_config = first_block(
+                first_block(data_source.config, "data_source_configuration") or {},
+                "s3_configuration",
+            )
+            if s3_config is None:
+                continue
+            bucket_arn = s3_config.get("bucket_arn")
+            if not isinstance(bucket_arn, str):
+                continue
+            label = extract_ref(bucket_arn, "aws_s3_bucket")
+            arn_match = _ARN_BUCKET_NAME.match(bucket_arn.strip())
+            literal_name = arn_match.group(1) if arn_match else None
+            literal_match = literal_name is not None and literal_name in (
+                bucket.name,
+                declared_name,
+            )
+            if label == bucket.name or literal_match:
+                related.append(data_source)
         return related
 
     def _finding(
