@@ -4,6 +4,7 @@ from .apigateway import APIGatewayAIProxyAuthCheck
 from .azure_openai import AzureOpenAINetworkCheck
 from .bedrock_agentcore import BedrockAgentCoreGatewayCheck
 from .datastores import VectorDataStoreCheck
+from .ecs_vectorstore import ECSVectorStoreReachabilityCheck
 from .iam import AIServiceIAMCheck
 from .network import AIVPCEndpointCheck
 from .pinecone import PineconeOrgRoleCheck
@@ -19,6 +20,7 @@ ALL_CHECKS = [
     AIVPCEndpointCheck(),
     VectorDataStoreCheck(),
     WeaviateAnonymousAccessCheck(),
+    ECSVectorStoreReachabilityCheck(),
     PineconeOrgRoleCheck(),
     AzureOpenAINetworkCheck(),
     BedrockAgentCoreGatewayCheck(),

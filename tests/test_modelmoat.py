@@ -69,6 +69,7 @@ def test_every_check_fires_on_insecure_stack():
         "VPC-001",
         "VEC-001",
         "VEC-002",
+        "VEC-003",
         "PIN-001",
         "AZR-001",
         "BRK-001",
@@ -262,6 +263,43 @@ def test_weaviate_matching_is_whole_token_and_chart_scoped():
     named = {f.resource_name for f in scan(SECURE).findings}
     assert "unrelated_app" not in named, "another chart is not weaviate"
     assert "lookalike" not in named, "weaviatelike is not weaviate"
+
+
+# --------------------------------------------------------------------- #
+# VEC-003: self-hosted vector databases on ECS                          #
+# --------------------------------------------------------------------- #
+def test_ecs_vectorstore_public_ip_detected_for_all_three_engines():
+    hits = {f.resource_name for f in scan(INSECURE).findings if f.check_id == "VEC-003"}
+    assert hits == {"qdrant", "weaviate", "milvus"}
+
+
+def test_ecs_vectorstore_finding_is_high_and_names_the_engine():
+    hits = [f for f in scan(INSECURE).findings if f.check_id == "VEC-003"]
+    assert hits
+    for finding in hits:
+        assert finding.severity == "HIGH"
+    messages = "\n".join(f.message for f in hits)
+    assert "Qdrant" in messages
+    assert "Weaviate" in messages
+    assert "Milvus" in messages
+
+
+def test_ecs_vectorstore_stays_silent_without_public_ip_or_on_ec2():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "qdrant_private" not in named, "assign_public_ip defaults to false"
+    assert "weaviate_private" not in named, "assign_public_ip explicitly false"
+    assert "milvus_ec2" not in named, "assign_public_ip is not honored on EC2 launch type"
+
+
+def test_ecs_vectorstore_private_ecr_image_is_unprovable_blind_spot():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "internal_vectordb" not in named
+
+
+def test_ecs_vectorstore_matching_is_whole_repo_path_not_substring():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "qdrant_lookalike" not in named, "myqdrant-fork is not qdrant/qdrant"
+    assert "web_frontend" not in named, "nginx is not a vector database"
 
 
 # --------------------------------------------------------------------- #
