@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import dataclasses
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -26,6 +27,8 @@ from github_app.signature import verify_signature
 from github_app.tree import TreeFetchError, fetch_terraform_tree
 from modelmoat.checks import ALL_CHECKS
 from modelmoat.scanner import Scanner
+
+logger = logging.getLogger(__name__)
 
 
 def _response(status: int, message: str) -> dict:
@@ -50,11 +53,13 @@ def lambda_handler(event: dict, context) -> dict:
     try:
         credentials = get_credentials()
     except CredentialsError as exc:
+        logger.error("credentials_error", extra={"reason": str(exc)})
         return _response(502, f"could not fetch credentials: {exc}")
 
     if not verify_signature(
         body_bytes, headers.get("x-hub-signature-256"), credentials["GITHUB_WEBHOOK_SECRET"]
     ):
+        logger.warning("invalid_signature")
         return _response(401, "invalid signature")
 
     try:
@@ -94,6 +99,10 @@ def lambda_handler(event: dict, context) -> dict:
             access.token, target.repo_full_name, target.pr_number, summary_body(summary)
         )
     except (GitHubAppAPIError, TreeFetchError) as exc:
+        logger.error(
+            "upstream_error",
+            extra={"error_type": type(exc).__name__, "pr_number": target.pr_number},
+        )
         return _response(
             502, f"upstream error scanning pull_request #{target.pr_number}: {exc}"
         )
