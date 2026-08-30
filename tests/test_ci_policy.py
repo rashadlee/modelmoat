@@ -26,9 +26,11 @@ _USES_LINE = re.compile(r"^\s*-?\s*uses:\s*(\S+)", re.MULTILINE)
 _PACKAGE_LINE = re.compile(r"^([A-Za-z0-9_.-]+)==\S+ \\$", re.MULTILINE)
 _WRITE_PERMISSION = re.compile(r"^\s*([a-z-]+):\s*write\s*$", re.MULTILINE)
 
-# The only write scope any workflow in this repo may request: OIDC token
-# issuance for PyPI Trusted Publishing, not a repository content mutation.
-_ALLOWED_WRITE_PERMISSIONS = {"id-token"}
+# The only write scopes any workflow in this repo may request: OIDC token
+# issuance for PyPI Trusted Publishing and build provenance attestation, and
+# persisting that attestation via Sigstore - neither is a repository content
+# mutation.
+_ALLOWED_WRITE_PERMISSIONS = {"id-token", "attestations"}
 
 
 def _all_workflows() -> list[Path]:
