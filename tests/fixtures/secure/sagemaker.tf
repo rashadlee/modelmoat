@@ -34,3 +34,15 @@ resource "aws_sagemaker_domain" "studio" {
     execution_role = aws_iam_role.sm_exec.arn
   }
 }
+# app_network_access_type from a variable is unprovable, so it must not be
+# flagged - the same rule every other check follows for interpolated values.
+resource "aws_sagemaker_domain" "from_variable" {
+  domain_name              = "from-variable-studio"
+  auth_mode                = "IAM"
+  vpc_id                   = aws_vpc.main.id
+  subnet_ids               = [aws_subnet.private_a.id]
+  app_network_access_type  = var.app_network_access_type
+  default_user_settings {
+    execution_role = aws_iam_role.sm_exec.arn
+  }
+}

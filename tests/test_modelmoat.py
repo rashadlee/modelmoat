@@ -159,6 +159,66 @@ def test_public_postgres_is_critical():
 
 
 # --------------------------------------------------------------------- #
+# SMK-001: SageMaker Studio domain network access                       #
+# --------------------------------------------------------------------- #
+def test_studio_domain_missing_access_type_is_high():
+    result = scan(INSECURE)
+    hits = [
+        f
+        for f in result.findings
+        if f.check_id == "SMK-001" and f.resource_name == "unset_access_type"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+    assert hits[0].detail == "app_network_access_type"
+
+
+def test_studio_domain_explicit_public_internet_only_is_high():
+    result = scan(INSECURE)
+    hits = [
+        f
+        for f in result.findings
+        if f.check_id == "SMK-001" and f.resource_name == "explicit_public"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+    assert hits[0].detail == "app_network_access_type"
+
+
+def test_studio_domain_vpc_only_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "studio" not in named
+
+
+def test_studio_domain_variable_driven_access_type_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "from_variable" not in named
+
+
+def test_model_finding_detail_is_unchanged_by_domain_addition():
+    # detail feeds the fingerprint (see scanner.Finding.fingerprint), so
+    # adding the domain method to SMK-001 must not touch the model
+    # finding's detail token - that would orphan every baseline entry
+    # that referenced it.
+    result = scan(INSECURE)
+    model_hits = [
+        f
+        for f in result.findings
+        if f.check_id == "SMK-001" and f.resource_name == "exposed_llm"
+    ]
+    assert len(model_hits) == 1
+    assert model_hits[0].detail == ""
+
+    domain_hits = [
+        f
+        for f in result.findings
+        if f.check_id == "SMK-001" and f.resource_type == "aws_sagemaker_domain"
+    ]
+    assert len(domain_hits) == 2
+    assert len({f.fingerprint for f in domain_hits + model_hits}) == 3
+
+
+# --------------------------------------------------------------------- #
 # PIN-001 and VEC-002: vector stores outside AWS                        #
 # --------------------------------------------------------------------- #
 def test_pinecone_org_owner_on_machine_principal_is_high():
