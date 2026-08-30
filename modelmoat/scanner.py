@@ -78,11 +78,17 @@ class Finding:
 
 @dataclass
 class ScanResult:
-    """Aggregated result of a scan, including files that failed to parse."""
+    """Aggregated result of a scan, including files that failed to parse and
+    checks that failed to run."""
 
     files_scanned: int = 0
     findings: list[Finding] = field(default_factory=list)
     parse_errors: list[dict] = field(default_factory=list)
+    # A check that crashes on one adversarial or partially edited block must
+    # not take every other check's findings down with it, and must not look
+    # like a clean, complete scan either - both are the same failure mode
+    # parse_errors already handles for a file that could not be read.
+    check_errors: list[dict] = field(default_factory=list)
 
     def count(self, severity: str) -> int:
         return sum(1 for f in self.findings if f.severity == severity)
@@ -107,8 +113,10 @@ class ScanResult:
                 "medium": self.count("MEDIUM"),
                 "low": self.count("LOW"),
                 "parse_errors": len(self.parse_errors),
+                "check_errors": len(self.check_errors),
             },
             "parse_errors": self.parse_errors,
+            "check_errors": self.check_errors,
             "findings": [f.to_dict() for f in self.findings],
         }
 
@@ -135,8 +143,15 @@ class Scanner:
         graph = build_graph(paths)
 
         findings: list[Finding] = []
+        check_errors: list[dict] = []
         for check in self.checks:
-            findings.extend(check.run(graph))
+            try:
+                findings.extend(check.run(graph))
+            except Exception as exc:  # noqa: BLE001 - one check's bug must not
+                # silence every other check's findings, or look identical to a
+                # clean, complete scan; see ScanResult.check_errors.
+                first_line = str(exc).splitlines()[0][:160] if str(exc) else type(exc).__name__
+                check_errors.append({"check_id": check.check_id, "error": first_line})
 
         findings.sort(
             key=lambda f: (-SEVERITY_RANK.get(f.severity, 0), f.file_path, f.line, f.check_id)
@@ -149,4 +164,5 @@ class Scanner:
                 {"file": str(path), "error": message}
                 for path, message in graph.parse_errors
             ],
+            check_errors=check_errors,
         )

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..graph import ProjectGraph, Resource, extract_ref
+from ..graph import ProjectGraph, Resource, as_list, extract_ref
 from ..policy import (
     parse_policy_document,
     raw_wildcard_scan,
@@ -96,8 +96,12 @@ class AIServiceIAMCheck:
             policy_label = extract_ref(attachment.config.get("policy_arn"), "aws_iam_policy")
             if not policy_label:
                 continue
-            role_refs = [attachment.config.get("role")] + list(
-                attachment.config.get("roles") or []
+            # as_list, not list(x or []): a provider-invalid but parser-valid
+            # shape like `roles = true` would otherwise reach list(True) and
+            # crash the whole scan, or list("a-role") and iterate it character
+            # by character instead of treating it as one value.
+            role_refs = [attachment.config.get("role")] + as_list(
+                attachment.config.get("roles")
             )
             for ref in role_refs:
                 label = resolve_role(ref)

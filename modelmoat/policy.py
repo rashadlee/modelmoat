@@ -43,16 +43,29 @@ RISKY_MANAGED_POLICIES = (
 
 _HCL_KEY = re.compile(r'("[^"\n=]+"|\b[A-Za-z_][A-Za-z0-9_]*\b)\s*=(?!=)')
 
+# The account-id segment of an AWS-owned managed policy's ARN is always the
+# literal string "aws", never a real account number - that's what actually
+# distinguishes it from a customer-managed policy, not the policy's name. A
+# customer-managed policy named to look like one (CustomAmazonBedrockFullAccess)
+# has a real 12-digit account id there instead, so anchoring on this exact
+# prefix (rather than a name suffix) can't be fooled by naming alone.
+_MANAGED_POLICY_ARN = re.compile(r"^arn:aws:iam::aws:policy/(?P<path>.+)$", re.IGNORECASE)
+
 
 def risky_managed_policy(policy_arn) -> str | None:
-    """Return the matched risky managed policy name, or None."""
+    """Return the matched risky managed policy name, or None.
+
+    Requires the canonical AWS-managed-policy ARN shape and an exact policy
+    name match - a suffix match alone would also match a customer-managed
+    policy merely named to look like the real one.
+    """
     if not isinstance(policy_arn, str) or not policy_arn:
         return None
-    lowered = policy_arn.lower()
-    for managed in RISKY_MANAGED_POLICIES:
-        if lowered.endswith(("/" + managed, managed)):
-            return managed
-    return None
+    match = _MANAGED_POLICY_ARN.match(policy_arn.strip())
+    if not match:
+        return None
+    name = match.group("path").rsplit("/", 1)[-1].lower()
+    return name if name in RISKY_MANAGED_POLICIES else None
 
 
 def _hcl_object_to_json(text: str) -> str:
@@ -210,9 +223,25 @@ def raw_wildcard_scan(value) -> list[str]:
 
 
 def allows_public_principal(doc: dict) -> bool:
-    """True when any Allow statement grants to Principal "*"."""
+    """True when any Allow statement grants to Principal "*" with no
+    Condition attached.
+
+    A Condition is AWS's own mechanism for narrowing an otherwise-public
+    grant - aws:PrincipalOrgID, aws:SourceVpce, an appropriately scoped
+    aws:SourceIp, and others can all mean the statement is not actually
+    reachable by anyone on the internet. modelmoat cannot evaluate an
+    arbitrary condition operator against arbitrary values (is a /16
+    aws:SourceIp "narrow"? a /24?), so rather than guess, any Condition on
+    an otherwise-public statement takes it out of this check entirely. The
+    calling check's own less severe fallback - a hygiene finding, or
+    OpenSearch's "reachability unclear without vpc_options" - already gives
+    an appropriately cautious result instead of an unproven "anyone on the
+    internet" claim.
+    """
     for statement in iter_statements(doc):
         if not _is_allow(statement):
+            continue
+        if statement.get("Condition", statement.get("condition")):
             continue
         principal = statement.get("Principal", statement.get("principal"))
         if isinstance(principal, str) and principal.strip() == "*":
@@ -224,31 +253,12 @@ def allows_public_principal(doc: dict) -> bool:
     return False
 
 
-_VPC_RESTRICTING_CONDITION_KEYS = {"aws:sourcevpce", "aws:sourcevpc"}
-
-
-def _has_vpc_restricting_condition(statement: dict) -> bool:
-    from .graph import blocks  # local import avoids a cycle at module load
-
-    for condition in blocks(statement, "condition"):
-        variable = str(condition.get("variable", "")).strip().lower()
-        if variable in _VPC_RESTRICTING_CONDITION_KEYS:
-            return True
-    return False
-
-
 def statement_block_allows_public_principal(data_config: dict) -> bool:
     """Same check as allows_public_principal, for a data.aws_iam_policy_document
-    config expressed as `principals` blocks rather than a JSON Principal key.
-
-    A `principals { identifiers = ["*"] }` statement gated by an
-    aws:SourceVpce/aws:SourceVpc condition is the standard way to restrict a
-    resource policy to a specific VPC endpoint - there is no principal-only
-    way to express that restriction in IAM, so it must be recognized here or
-    every VPC-endpoint-restricted document referenced this way would read as
-    public. This intentionally does not extend to inline JSON policies via
-    allows_public_principal - broader Condition handling there is a separate,
-    not-yet-addressed gap.
+    config expressed as `principals` blocks rather than a JSON Principal key -
+    any `condition` block on the statement takes it out of this check
+    entirely, the same reasoning and the same reason: full condition
+    evaluation is not something modelmoat attempts.
     """
     from .graph import blocks  # local import avoids a cycle at module load
 
@@ -256,7 +266,7 @@ def statement_block_allows_public_principal(data_config: dict) -> bool:
         effect = str(statement.get("effect", "Allow")).strip().lower()
         if effect != "allow":
             continue
-        if _has_vpc_restricting_condition(statement):
+        if blocks(statement, "condition"):
             continue
         for principal_block in blocks(statement, "principals"):
             identifiers = principal_block.get("identifiers")

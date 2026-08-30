@@ -223,14 +223,23 @@ class ProjectGraph:
         return [d for d in self.data_sources if d.type in wanted]
 
 
-def _find_line(lines: list[str], kind: str, rtype: str, name: str) -> int:
-    pattern = re.compile(
-        rf'^\s*{kind}\s+"{re.escape(rtype)}"\s+"{re.escape(name)}"'
-    )
+_DECLARATION_PATTERN = re.compile(r'^\s*(resource|data)\s+"([^"]+)"\s+"([^"]+)"')
+
+
+def _line_index(lines: list[str]) -> dict[tuple[str, str, str], int]:
+    """Map (kind, type, name) to its first declaration line, built by
+    scanning the file once - not re-scanned once per resource, which made
+    line discovery O(resources x lines) for a file with many declarations.
+    """
+    index: dict[tuple[str, str, str], int] = {}
     for number, text in enumerate(lines, start=1):
-        if pattern.match(text):
-            return number
-    return 1
+        match = _DECLARATION_PATTERN.match(text)
+        if not match:
+            continue
+        key = (match.group(1), match.group(2), match.group(3))
+        if key not in index:
+            index[key] = number
+    return index
 
 
 def _parse_tf_json(text: str) -> dict:
@@ -442,6 +451,7 @@ def build_graph(paths: Iterable[Path]) -> ProjectGraph:
             continue
 
         lines = text.splitlines()
+        line_index = _line_index(lines)
         for kind, bucket in (("resource", graph.resources), ("data", graph.data_sources)):
             for block in parsed.get(kind, []) or []:
                 if not isinstance(block, dict):
@@ -466,7 +476,7 @@ def build_graph(paths: Iterable[Path]) -> ProjectGraph:
                                 name=name,
                                 config=clean,
                                 file=tf_file,
-                                line=_find_line(lines, kind, rtype, name),
+                                line=line_index.get((kind, rtype, name), 1),
                                 module=tf_file.parent,
                                 unresolved_cardinality=unresolved_cardinality,
                             )

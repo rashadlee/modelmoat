@@ -13,8 +13,13 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
+import time
 from pathlib import Path
+from urllib.parse import unquote as url_unquote
 
+import jsonschema
 import pytest
 from typer.testing import CliRunner
 
@@ -33,9 +38,10 @@ from modelmoat.policy import (
     risky_managed_policy,
     wildcard_ai_grants,
 )
-from modelmoat.sarif import to_sarif
-from modelmoat.scanner import Finding, Scanner
+from modelmoat.sarif import _artifact_uri, to_sarif
+from modelmoat.scanner import Finding, Scanner, ScanResult
 
+REPO_ROOT = Path(__file__).parent.parent
 FIXTURES = Path(__file__).parent / "fixtures"
 SECURE = FIXTURES / "secure"
 INSECURE = FIXTURES / "insecure"
@@ -97,6 +103,101 @@ def test_data_source_policy_document_is_detected():
     )
 
 
+@pytest.mark.parametrize(
+    "roles_clause",
+    [
+        "roles = true",
+        "roles = false",
+        "roles = 0",
+        "roles = 1",
+        "roles = null",
+        'roles = "single-role-string"',
+        'roles = ["role-a", "role-b"]',
+        'roles = { nested = "map" }',
+        "",
+    ],
+    ids=[
+        "bool_true",
+        "bool_false",
+        "int_zero",
+        "int_one",
+        "null",
+        "bare_string",
+        "list",
+        "map",
+        "absent",
+    ],
+)
+def test_iam_attachment_roles_survives_every_parser_valid_shape(tmp_path, roles_clause):
+    # MM-11 regression: `roles = true` used to reach list(True) inside
+    # IAM-001 and crash the whole scan - a syntactically valid but
+    # provider-invalid shape. Every shape here must be handled without an
+    # uncaught exception, and the real grant on the policy itself must still
+    # be detected regardless of what `roles` looks like.
+    (tmp_path / "main.tf").write_text(
+        f"""
+resource "aws_iam_policy" "danger" {{
+  name   = "danger"
+  policy = jsonencode({{
+    Version = "2012-10-17"
+    Statement = [{{
+      Effect   = "Allow"
+      Action   = ["bedrock:*"]
+      Resource = "*"
+    }}]
+  }})
+}}
+resource "aws_iam_policy_attachment" "bad" {{
+  name       = "bad-attachment"
+  policy_arn = aws_iam_policy.danger.arn
+  {roles_clause}
+}}
+"""
+    )
+    result = scan(tmp_path)
+    assert result.check_errors == []
+    assert any(f.check_id == "IAM-001" for f in result.findings)
+
+
+class _ExplodingCheck:
+    """A fake check that always raises, for testing scan-level isolation."""
+
+    check_id = "FAKE-999"
+    check_name = "Deliberately broken check for isolation testing"
+
+    def run(self, graph):
+        raise RuntimeError("synthetic crash to test isolation")
+
+
+def test_scanner_isolates_a_crashing_check_from_the_rest_of_the_scan():
+    # MM-11 regression: one check's bug must not take every other check's
+    # findings down with it, and the crash must be recorded, not swallowed.
+    result = Scanner([_ExplodingCheck(), *ALL_CHECKS]).scan([INSECURE])
+    assert result.check_errors == [
+        {"check_id": "FAKE-999", "error": "synthetic crash to test isolation"}
+    ]
+    assert any(f.check_id == "S3-001" for f in result.findings)
+
+
+def test_cli_check_crash_fails_closed_for_machine_output(monkeypatch, tmp_path):
+    # MM-11 regression: preserve the same fail-closed behavior for a crashed
+    # check that MM-05 already established for a file that could not be
+    # parsed.
+    import modelmoat.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "ALL_CHECKS", [_ExplodingCheck(), *cli_module.ALL_CHECKS])
+    (tmp_path / "main.tf").write_text('resource "aws_s3_bucket" "x" {\n  bucket = "y"\n}\n')
+
+    runner = CliRunner()
+    strict = runner.invoke(app, ["scan", str(tmp_path), "--json"])
+    assert strict.exit_code == 1
+    payload = json.loads(strict.stdout)
+    assert payload["summary"]["check_errors"] == 1
+
+    lenient = runner.invoke(app, ["scan", str(tmp_path), "--json", "--allow-partial"])
+    assert lenient.exit_code == 0
+
+
 def test_explicitly_disabled_encryption_is_detected():
     result = scan(INSECURE)
     assert any(
@@ -151,6 +252,129 @@ def test_fargate_service_with_matching_endpoint_stays_silent():
     # matching applies across resource types, not just Lambda.
     named = {f.resource_name for f in scan(SECURE).findings}
     assert "fargate_agent" not in named
+
+
+_VPC_MISMATCH_SCENARIOS = {
+    # name: (endpoint attribute overrides, whether the endpoint lives in the
+    # same VPC as the lambda's subnet)
+    "wrong_vpc": ({}, False),
+    "provider_alias": ({"provider": "aws.other_region"}, True),
+    "count_zero": ({"count": "0"}, True),
+    "wrong_type": ({"vpc_endpoint_type": '"Gateway"'}, True),
+    "private_dns_disabled": ({"private_dns_enabled": "false"}, True),
+}
+
+
+def _endpoint_mismatch_module(scenario: str, same_vpc: bool, overrides: dict) -> str:
+    vpc_id_expr = (
+        f"aws_vpc.{scenario}_vpc.id" if same_vpc else f"aws_vpc.{scenario}_other_vpc.id"
+    )
+    extra_vpc = "" if same_vpc else f'resource "aws_vpc" "{scenario}_other_vpc" {{}}\n'
+
+    # A dict, not string concatenation: an override must replace a default
+    # attribute (vpc_endpoint_type for the wrong-type scenario) rather than
+    # duplicate it, which would be invalid/ambiguous HCL.
+    attrs = {
+        "vpc_id": vpc_id_expr,
+        "service_name": '"com.amazonaws.us-east-1.bedrock-runtime"',
+        "vpc_endpoint_type": '"Interface"',
+    }
+    attrs.update(overrides)
+    attr_lines = "\n".join(f"  {key} = {value}" for key, value in attrs.items())
+
+    return f"""
+resource "aws_vpc" "{scenario}_vpc" {{}}
+{extra_vpc}resource "aws_subnet" "{scenario}_subnet" {{
+  vpc_id = aws_vpc.{scenario}_vpc.id
+}}
+resource "aws_lambda_function" "{scenario}_lambda" {{
+  function_name = "{scenario}-lambda"
+  vpc_config {{
+    subnet_ids = [aws_subnet.{scenario}_subnet.id]
+  }}
+  environment {{
+    variables = {{ BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet" }}
+  }}
+}}
+resource "aws_vpc_endpoint" "{scenario}_endpoint" {{
+{attr_lines}
+}}
+"""
+
+
+def test_vpc_endpoint_correlation_requires_more_than_a_service_name_substring(tmp_path):
+    # MM-10 regression: a Bedrock endpoint anywhere in the project used to
+    # silently suppress a Lambda's finding regardless of VPC, module,
+    # provider, type, or cardinality. Each scenario here has an endpoint
+    # that matches on service name alone but must not count as protecting
+    # its Lambda for one specific, isolated reason.
+    module_a = tmp_path / "module_a"
+    module_a.mkdir()
+
+    control = """
+resource "aws_vpc" "control_vpc" {}
+resource "aws_subnet" "control_subnet" {
+  vpc_id = aws_vpc.control_vpc.id
+}
+resource "aws_lambda_function" "control_lambda" {
+  function_name = "control-lambda"
+  vpc_config {
+    subnet_ids = [aws_subnet.control_subnet.id]
+  }
+  environment {
+    variables = { BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet" }
+  }
+}
+resource "aws_vpc_endpoint" "control_endpoint" {
+  vpc_id            = aws_vpc.control_vpc.id
+  service_name      = "com.amazonaws.us-east-1.bedrock-runtime"
+  vpc_endpoint_type = "Interface"
+}
+"""
+    content = control + "".join(
+        _endpoint_mismatch_module(name, same_vpc, overrides)
+        for name, (overrides, same_vpc) in _VPC_MISMATCH_SCENARIOS.items()
+    )
+    (module_a / "main.tf").write_text(content)
+
+    # Wrong module: the Lambda is in its own module_c (not module_a, whose
+    # own control_endpoint would otherwise legitimately protect it - the
+    # point is a sibling module's endpoint, not module_a's real one), and a
+    # real, otherwise-matching endpoint sits in a separate module_b.
+    module_c = tmp_path / "module_c"
+    module_c.mkdir()
+    (module_c / "main.tf").write_text(
+        """
+resource "aws_lambda_function" "wrong_module_lambda" {
+  function_name = "wrong-module-lambda"
+  vpc_config {
+    subnet_ids = ["subnet-hardcoded-id"]
+  }
+  environment {
+    variables = { BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet" }
+  }
+}
+"""
+    )
+    module_b = tmp_path / "module_b"
+    module_b.mkdir()
+    (module_b / "main.tf").write_text(
+        """
+resource "aws_vpc_endpoint" "wrong_module_endpoint" {
+  vpc_id            = "vpc-hardcoded-id"
+  service_name      = "com.amazonaws.us-east-1.bedrock-runtime"
+  vpc_endpoint_type = "Interface"
+}
+"""
+    )
+
+    result = scan(tmp_path)
+    flagged = {f.resource_name for f in result.findings if f.check_id == "VPC-001"}
+
+    assert "control_lambda" not in flagged, "a genuinely matching endpoint must still suppress"
+    for scenario in _VPC_MISMATCH_SCENARIOS:
+        assert f"{scenario}_lambda" in flagged, f"{scenario} must not be suppressed"
+    assert "wrong_module_lambda" in flagged
 
 
 def test_public_acl_on_training_bucket_is_critical():
@@ -776,6 +1000,104 @@ resource "aws_opensearch_domain" "vpce_vectors" {
 
 
 # --------------------------------------------------------------------- #
+# MM-12: restrictive policy conditions                                  #
+# --------------------------------------------------------------------- #
+def test_restrictive_conditions_on_inline_policies_are_not_called_public(tmp_path):
+    # MM-12 regression: an inline (not referenced) bucket policy granting
+    # Principal "*" but narrowed by a Condition must not be described as
+    # anonymous internet access - only the genuinely unconditional wildcard
+    # should read as Critical.
+    (tmp_path / "main.tf").write_text(
+        """
+resource "aws_s3_bucket" "unconditional_public" {
+  bucket = "acme-unconditional-training-data"
+}
+resource "aws_s3_bucket_policy" "unconditional_public" {
+  bucket = aws_s3_bucket.unconditional_public.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["s3:GetObject"]
+      Resource  = ["arn:aws:s3:::acme-unconditional-training-data/*"]
+    }]
+  })
+}
+
+resource "aws_s3_bucket" "org_restricted_public" {
+  bucket = "acme-org-restricted-training-data"
+}
+resource "aws_s3_bucket_policy" "org_restricted_public" {
+  bucket = aws_s3_bucket.org_restricted_public.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["s3:GetObject"]
+      Resource  = ["arn:aws:s3:::acme-org-restricted-training-data/*"]
+      Condition = {
+        StringEquals = { "aws:PrincipalOrgID" = "o-example12345" }
+      }
+    }]
+  })
+}
+
+resource "aws_s3_bucket" "vpce_restricted_public" {
+  bucket = "acme-vpce-restricted-training-data"
+}
+resource "aws_s3_bucket_policy" "vpce_restricted_public" {
+  bucket = aws_s3_bucket.vpce_restricted_public.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["s3:GetObject"]
+      Resource  = ["arn:aws:s3:::acme-vpce-restricted-training-data/*"]
+      Condition = {
+        StringEquals = { "aws:SourceVpce" = "vpce-0123456789abcdef0" }
+      }
+    }]
+  })
+}
+
+resource "aws_s3_bucket" "narrow_ip_restricted_public" {
+  bucket = "acme-narrow-ip-training-data"
+}
+resource "aws_s3_bucket_policy" "narrow_ip_restricted_public" {
+  bucket = aws_s3_bucket.narrow_ip_restricted_public.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["s3:GetObject"]
+      Resource  = ["arn:aws:s3:::acme-narrow-ip-training-data/*"]
+      Condition = {
+        IpAddress = { "aws:SourceIp" = "203.0.113.0/24" }
+      }
+    }]
+  })
+}
+"""
+    )
+    result = scan(tmp_path)
+    public_policy_names = {
+        f.resource_name for f in result.findings if f.detail == "public_policy"
+    }
+    assert public_policy_names == {"unconditional_public"}
+
+    # The restricted buckets must not be described as anonymous internet
+    # access anywhere in their findings.
+    for name in ("org_restricted_public", "vpce_restricted_public", "narrow_ip_restricted_public"):
+        messages = [f.message for f in result.findings if f.resource_name == name]
+        assert messages, f"expected at least a hygiene finding for {name}"
+        assert not any("anyone on the internet" in m for m in messages)
+
+
+# --------------------------------------------------------------------- #
 # MM-08: NotAction / NotResource / composed policies                    #
 # --------------------------------------------------------------------- #
 def test_iam_inverse_and_composed_policies_are_detected(tmp_path):
@@ -959,6 +1281,39 @@ def test_total_project_byte_quota_is_enforced(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------- #
+# MM-16: line discovery scales with input, not with input squared        #
+# --------------------------------------------------------------------- #
+def test_line_discovery_stays_roughly_linear_as_resource_count_grows(tmp_path):
+    # MM-16 regression: _find_line used to rescan every line in the file for
+    # every resource - O(resources x lines). Quadrupling the resource count
+    # should cost roughly proportionally more now, not ~16x more.
+    def build(n):
+        content = "\n".join(
+            f'resource "aws_s3_bucket" "b{i}" {{\n  bucket = "x{i}"\n}}\n' for i in range(n)
+        )
+        target = tmp_path / f"n{n}"
+        target.mkdir()
+        (target / "big.tf").write_text(content)
+        start = time.perf_counter()
+        graph = build_graph([target])
+        elapsed = time.perf_counter() - start
+        assert len(graph.resources) == n
+        return elapsed
+
+    small = build(1000)
+    large = build(4000)  # 4x the resource count
+
+    # A true O(n^2) rescan costs roughly 16x for a 4x input increase; linear
+    # costs roughly 4x. Generous headroom above linear absorbs constant
+    # overhead and machine variance without masking a real quadratic
+    # regression.
+    assert large < small * 10, (
+        f"line discovery does not look linear: {small:.3f}s for 1000 resources -> "
+        f"{large:.3f}s for 4000"
+    )
+
+
+# --------------------------------------------------------------------- #
 # Units                                                                 #
 # --------------------------------------------------------------------- #
 def test_unquote_strips_hcl2_quote_wrapping():
@@ -987,6 +1342,91 @@ def test_risky_managed_policy_matching_is_case_insensitive():
     assert risky_managed_policy("arn:aws:iam::aws:policy/AmazonBedrockFullAccess")
     assert risky_managed_policy("arn:aws:iam::aws:policy/amazonsagemakerfullaccess")
     assert risky_managed_policy("arn:aws:iam::aws:policy/ReadOnlyAccess") is None
+
+
+@pytest.mark.parametrize(
+    "arn,expected",
+    [
+        ("arn:aws:iam::aws:policy/AmazonBedrockFullAccess", "amazonbedrockfullaccess"),
+        ("arn:aws:iam::123456789012:policy/AmazonBedrockFullAccess", None),
+        ("arn:aws:iam::123456789012:policy/CustomAmazonBedrockFullAccess", None),
+        ("arn:aws:iam::aws:policy/ReadOnlyAccess", None),
+    ],
+    ids=[
+        "aws_managed",
+        "customer_managed_same_name",
+        "customer_managed_deceptive_suffix",
+        "aws_managed_unrelated",
+    ],
+)
+def test_risky_managed_policy_requires_the_canonical_aws_managed_arn(arn, expected):
+    # MM-19 regression: only the canonical arn:aws:iam::aws:policy/... shape
+    # counts - the "aws" account-id segment is what actually distinguishes
+    # an AWS-owned policy from a customer-managed one, not the policy's
+    # name, so a customer-managed policy in a real account must not be
+    # mistaken for AWS's own FullAccess grant however it's named.
+    assert risky_managed_policy(arn) == expected
+
+
+def test_iam_deceptive_customer_managed_policy_name_is_not_flagged(tmp_path):
+    # End-to-end version of the same regression: IAM-001 must stay silent
+    # on a customer-managed policy attachment named to look like an
+    # AWS-managed FullAccess grant.
+    (tmp_path / "main.tf").write_text(
+        """
+resource "aws_iam_role" "decoy_role" {
+  name = "decoy-role"
+}
+resource "aws_iam_role_policy_attachment" "decoy" {
+  role       = aws_iam_role.decoy_role.id
+  policy_arn = "arn:aws:iam::123456789012:policy/CustomAmazonBedrockFullAccess"
+}
+"""
+    )
+    assert scan(tmp_path).findings == []
+
+
+_PROTECTION_VALUE_CASES = [
+    ("true", False),
+    ("false", True),
+    (None, True),
+    ("var.enable_block", False),
+]
+
+
+@pytest.mark.parametrize(
+    "flag_value,disabled_expected",
+    _PROTECTION_VALUE_CASES,
+    ids=["true", "false", "missing", "unknown"],
+)
+def test_s3_access_block_flag_states_are_not_conflated(tmp_path, flag_value, disabled_expected):
+    # MM-19 regression: an unresolved (variable-driven) protection flag must
+    # not be described as "disabled" - only a proven false, or proven absent
+    # (AWS defaults these to false when omitted), may be.
+    flag_line = "" if flag_value is None else f"  block_public_acls = {flag_value}\n"
+    (tmp_path / "main.tf").write_text(
+        f"""
+resource "aws_s3_bucket" "training_data" {{
+  bucket = "acme-training-data"
+}}
+resource "aws_s3_bucket_public_access_block" "training_data" {{
+  bucket = aws_s3_bucket.training_data.id
+{flag_line}  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}}
+"""
+    )
+    weakened = [
+        f
+        for f in scan(tmp_path).findings
+        if f.check_id == "S3-001" and f.detail == "weakened_pab"
+    ]
+    if disabled_expected:
+        assert len(weakened) == 1
+        assert "block_public_acls" in weakened[0].message
+    else:
+        assert weakened == []
 
 
 # --------------------------------------------------------------------- #
@@ -1079,6 +1519,132 @@ def test_sarif_start_line_is_always_positive():
 def test_sarif_on_secure_fixture_has_zero_results():
     run = to_sarif(scan(SECURE), ALL_CHECKS)["runs"][0]
     assert run["results"] == []
+
+
+def test_sarif_uri_is_percent_encoded_for_special_characters():
+    # MM-18 regression: an unescaped '#' in a SARIF artifactLocation.uri is
+    # read as a fragment separator by any spec-compliant consumer, silently
+    # truncating the path - a file genuinely named "b#c.tf" would resolve to
+    # just "b".
+    absolute = "/tmp/mm18/b#c.tf"
+    relative = "infra/b#c.tf"
+
+    abs_uri = _artifact_uri(absolute)
+    assert abs_uri.startswith("file://")
+    assert "%23" in abs_uri
+    assert url_unquote(abs_uri[len("file://") :]) == absolute
+
+    rel_uri = _artifact_uri(relative)
+    assert not rel_uri.startswith("file://")
+    assert "%23" in rel_uri
+    assert url_unquote(rel_uri) == relative
+
+
+def test_sarif_output_for_a_hash_named_file_round_trips(tmp_path):
+    (tmp_path / "b#c.tf").write_text(
+        'resource "aws_s3_bucket" "training_data" {\n'
+        '  bucket = "acme-training-data"\n'
+        '  acl    = "public-read"\n'
+        "}\n"
+    )
+    result = scan(tmp_path)
+    log = to_sarif(result, ALL_CHECKS)
+    uris = [
+        r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        for r in log["runs"][0]["results"]
+    ]
+    assert uris
+    for uri in uris:
+        assert uri.startswith("file://")
+        assert url_unquote(uri[len("file://") :]).endswith("b#c.tf")
+
+
+_SARIF_SCHEMA = json.loads(
+    (Path(__file__).parent / "schemas" / "sarif-schema-2.1.0.json").read_text()
+)
+
+
+def test_sarif_output_conforms_to_the_official_schema():
+    # MM-17 regression: the suite previously only inspected selected fields
+    # (level, ruleIndex, security-severity) rather than validating the whole
+    # document against the format's own official schema, so a structurally
+    # invalid SARIF log could pass every existing test.
+    jsonschema.validate(instance=to_sarif(scan(INSECURE), ALL_CHECKS), schema=_SARIF_SCHEMA)
+
+
+def test_sarif_invocation_notifications_conform_to_the_official_schema():
+    # The parse_errors/check_errors invocation path (MM-05, MM-11) isn't
+    # exercised by a normal fixture scan, so validate it directly.
+    result = ScanResult(
+        files_scanned=2,
+        findings=[],
+        parse_errors=[{"file": "bad.tf", "error": "syntax error"}],
+        check_errors=[{"check_id": "S3-001", "error": "boom"}],
+    )
+    jsonschema.validate(instance=to_sarif(result, ALL_CHECKS), schema=_SARIF_SCHEMA)
+
+
+def test_packaged_wheel_installs_and_runs_correctly(tmp_path):
+    # MM-17 regression: the suite only ever ran against the editable source
+    # tree, never the actual distributable wheel - a packaging bug (missing
+    # package data, a wrong entry point, a module accidentally excluded from
+    # the build) could ship without ever failing a test.
+    dist_dir = tmp_path / "dist"
+    subprocess.run(
+        [sys.executable, "-m", "build", "--wheel", "--outdir", str(dist_dir), str(REPO_ROOT)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wheels = list(dist_dir.glob("*.whl"))
+    assert len(wheels) == 1, f"expected exactly one wheel, found {wheels}"
+
+    venv_dir = tmp_path / "venv"
+    subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+    venv_python = venv_dir / "bin" / "python"
+    subprocess.run(
+        [str(venv_python), "-m", "pip", "install", "--quiet", str(wheels[0])],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    modelmoat_bin = venv_dir / "bin" / "modelmoat"
+    clean = subprocess.run(
+        [str(modelmoat_bin), "scan", str(SECURE)], capture_output=True, text=True, check=False
+    )
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    assert "No findings" in clean.stdout
+
+    dirty = subprocess.run(
+        [str(modelmoat_bin), "scan", str(INSECURE), "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert dirty.returncode == 1, dirty.stdout + dirty.stderr
+    payload = json.loads(dirty.stdout)
+    assert payload["summary"]["total_findings"] > 0
+
+
+def test_cli_renders_bracket_names_literally_without_crashing(tmp_path):
+    # MM-18 regression: a resource label containing unbalanced Rich markup
+    # must render as literal text, not crash the whole CLI and lose every
+    # finding's output along with it.
+    (tmp_path / "main.tf").write_text(
+        'resource "aws_s3_bucket" "evil][/bright_red][green]FAKE-CLEAN" {\n'
+        '  bucket = "acme-training-data"\n'
+        '  acl    = "public-read"\n'
+        "}\n"
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["scan", str(tmp_path)])
+    # typer.Exit(code=1) always surfaces as a SystemExit through CliRunner,
+    # even on a clean, non-crashing exit - only a different exception type
+    # here (rich.errors.MarkupError, before the fix) means an actual crash.
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code == 1
+    assert "evil][/bright_red][green]FAKE-CLEAN" in result.output
 
 
 def test_fingerprints_are_unique_across_a_scan():

@@ -6,25 +6,50 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+
+# A push to the same branch supersedes whatever CI run was already in
+# flight for it - no reason to keep burning runner minutes on a commit
+# that is no longer the tip.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-      - uses: actions/checkout@v5
+      # Pinned to a reviewed commit, not a mutable tag: v5 can be repointed
+      # by the action's own maintainers (accidentally or via a compromised
+      # account) without this workflow's approval ever running again.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # This workflow never needs to push, tag, or otherwise act as the
+          # repository - a leaked runner credential should not be able to
+          # either.
+          persist-credentials: false
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Every runtime, dev, and transitive dependency is pinned to an exact
+      # version and verified by hash - a compromised or yanked-and-replaced
+      # package on PyPI cannot silently substitute itself here. The lock
+      # covers dependency resolution only; --no-deps keeps the editable
+      # install of modelmoat itself from re-resolving anything.
       - name: Install
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python -m pip install --upgrade pip==26.2.1
+          pip install --require-hashes -r .github/requirements-lock.txt
+          pip install --no-deps -e .
 
       - name: Lint
         run: ruff check modelmoat tests scripts

@@ -16,7 +16,7 @@ Block Public Access overrides ACLs and policies.
 
 from __future__ import annotations
 
-from ..graph import ProjectGraph, Resource, ai_tokens_in, extract_ref, truthy
+from ..graph import ProjectGraph, Resource, ai_tokens_in, extract_ref, missing_or_false, truthy
 from ..policy import resolve_public_principal
 from ..scanner import Finding
 
@@ -132,10 +132,15 @@ class ModelArtifactBucketCheck:
                     break
 
             # Evidence 3: an access block that turns protections off.
+            # missing_or_false, not "not truthy": a variable-driven flag
+            # value is unresolved, not proven disabled, and claiming it is
+            # would be exactly the overclaim modelmoat's messages must never
+            # make. missing_or_false already treats an unresolved value as
+            # neither true nor false rather than collapsing it into false.
             weakened = False
             for block in related_blocks:
                 disabled = [
-                    flag for flag in _FLAGS if not truthy(block.config.get(flag))
+                    flag for flag in _FLAGS if missing_or_false(block.config.get(flag))
                 ]
                 if disabled:
                     weakened = True

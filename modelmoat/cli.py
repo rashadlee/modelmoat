@@ -8,6 +8,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from . import __version__
 from .baseline import BaselineError, apply_baseline, load_baseline, write_baseline
@@ -171,16 +172,25 @@ def scan(
 
     # A baseline recorded from an incomplete scan would permanently accept
     # whatever was missed as if it had been reviewed, so refuse unless the
-    # caller explicitly opts into a partial one.
-    if write_baseline_to is not None and result.parse_errors and not allow_partial:
+    # caller explicitly opts into a partial one. A check that crashed is
+    # exactly as incomplete as a file that could not be parsed - some
+    # portion of the project went unevaluated either way.
+    incomplete = bool(result.parse_errors or result.check_errors)
+    if write_baseline_to is not None and incomplete and not allow_partial:
         error_console.print(
             "[red]refusing to write a baseline: "
-            f"{len(result.parse_errors)} file(s) could not be parsed[/red]"
+            f"{len(result.parse_errors)} file(s) could not be parsed, "
+            f"{len(result.check_errors)} check(s) failed to run[/red]"
         )
         for parse_error in result.parse_errors:
             error_console.print(
                 f"[yellow]warning:[/yellow] could not parse "
-                f"{parse_error['file']}: {parse_error['error']}"
+                f"{escape(str(parse_error['file']))}: {escape(parse_error['error'])}"
+            )
+        for check_error in result.check_errors:
+            error_console.print(
+                f"[yellow]warning:[/yellow] check {escape(check_error['check_id'])} "
+                f"failed to run: {escape(check_error['error'])}"
             )
         error_console.print(
             "[dim]Pass --allow-partial to record a baseline anyway.[/dim]"
@@ -194,12 +204,12 @@ def scan(
         try:
             write_baseline(write_baseline_to, result.findings)
         except OSError as exc:
-            error_console.print(f"[red]could not write baseline: {exc}[/red]")
+            error_console.print(f"[red]could not write baseline: {escape(str(exc))}[/red]")
             raise typer.Exit(code=2) from exc
         console.print()
         console.print(
             f"Recorded [bold]{len(result.findings)}[/bold] finding(s) to "
-            f"{write_baseline_to}"
+            f"{escape(str(write_baseline_to))}"
         )
         console.print(
             "[dim]Scans with --baseline will report only findings added after "
@@ -212,7 +222,7 @@ def scan(
         try:
             entries = load_baseline(baseline)
         except BaselineError as exc:
-            error_console.print(f"[red]{exc}[/red]")
+            error_console.print(f"[red]{escape(str(exc))}[/red]")
             raise typer.Exit(code=2) from exc
         comparison = apply_baseline(result.findings, entries)
         result.findings = comparison.active
@@ -223,20 +233,21 @@ def scan(
         for finding, was in comparison.escalated:
             error_console.print(
                 f"[yellow]warning:[/yellow] {finding.check_id} on "
-                f"{finding.resource_type}.{finding.resource_name} is now "
+                f"{escape(finding.resource_type)}.{escape(finding.resource_name)} is now "
                 f"{finding.severity}, was {was} when the baseline was written."
             )
 
     exit_code = 1 if result.max_rank() >= SEVERITY_RANK[fail_on] else 0
 
-    # A file modelmoat could not read is scanned by nobody. Machine output
-    # (--json, --sarif) feeds CI and code-scanning pipelines directly, so a
-    # partial scan there must not look identical to a clean, complete one -
-    # it fails closed by default. Human-readable output stays a warning by
-    # default, for an interactive run where unsupported HCL should not be a
-    # surprise build break; --fail-on-parse-error opts that mode in too.
-    # --allow-partial overrides either direction.
-    if result.parse_errors and not allow_partial and (fail_on_parse_error or json_out or sarif_out):
+    # A file modelmoat could not read, or a check that crashed instead of
+    # running, is scanned by nobody. Machine output (--json, --sarif) feeds
+    # CI and code-scanning pipelines directly, so a partial scan there must
+    # not look identical to a clean, complete one - it fails closed by
+    # default. Human-readable output stays a warning by default, for an
+    # interactive run where unsupported HCL should not be a surprise build
+    # break; --fail-on-parse-error opts that mode in too. --allow-partial
+    # overrides either direction.
+    if incomplete and not allow_partial and (fail_on_parse_error or json_out or sarif_out):
         exit_code = 1
 
     minimum = SEVERITY_RANK[min_severity]
@@ -280,7 +291,13 @@ def scan(
     for parse_error in result.parse_errors:
         error_console.print(
             f"[yellow]warning:[/yellow] could not parse "
-            f"{parse_error['file']}: {parse_error['error']}"
+            f"{escape(str(parse_error['file']))}: {escape(parse_error['error'])}"
+        )
+
+    for check_error in result.check_errors:
+        error_console.print(
+            f"[yellow]warning:[/yellow] check {escape(check_error['check_id'])} "
+            f"failed to run: {escape(check_error['error'])}"
         )
 
     console.print()
@@ -291,13 +308,18 @@ def scan(
 
     for finding in result.findings:
         color = _COLORS.get(finding.severity, "white")
+        # resource_type/name/file_path/message/remediation all ultimately
+        # come from the scanned Terraform, not from modelmoat itself - a
+        # crafted resource label containing Rich markup must render as
+        # literal text, not be interpreted as styling (or, unbalanced,
+        # crash rendering and lose every finding's output along with it).
         console.print(
             f"[{color}]{finding.severity:<8}[/{color}] [bold]{finding.check_id}[/bold]  "
-            f"{finding.resource_type}.{finding.resource_name}"
+            f"{escape(finding.resource_type)}.{escape(finding.resource_name)}"
         )
-        console.print(f"         [dim]{finding.file_path}:{finding.line}[/dim]")
-        console.print(f"         {finding.message}")
-        console.print(f"         [dim]fix:[/dim] {finding.remediation}")
+        console.print(f"         [dim]{escape(finding.file_path)}:{finding.line}[/dim]")
+        console.print(f"         {escape(finding.message)}")
+        console.print(f"         [dim]fix:[/dim] {escape(finding.remediation)}")
         console.print()
 
     console.print(

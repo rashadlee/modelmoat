@@ -6,6 +6,7 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from . import __version__
 from .scanner import SEVERITY_RANK
@@ -35,6 +36,25 @@ _SECURITY_SEVERITY = {
     "MEDIUM": "4.0",
     "LOW": "1.0",
 }
+
+
+def _artifact_uri(file_path: str) -> str:
+    """A valid RFC 3986 URI reference for a SARIF artifactLocation.
+
+    A raw filesystem path is not a URI: an unescaped '#' would be read as a
+    fragment separator by any spec-compliant consumer, silently truncating
+    the path (a file genuinely named "b#c.tf" would resolve to "b"), and a
+    space or '%' is not valid in a URI unescaped at all. An absolute path
+    becomes a proper file:// URI; a relative one - the common case, since
+    `modelmoat scan infra/` is how the README's own CI examples invoke it -
+    stays a relative reference, which is what GitHub's code scanning upload
+    expects to match the checked-out repository layout.
+    """
+    path = Path(file_path)
+    posix = path.as_posix()
+    if path.is_absolute():
+        return "file://" + quote(posix)
+    return quote(posix, safe="/")
 
 
 def _build_rules(
@@ -113,9 +133,7 @@ def to_sarif(result: ScanResult, checks: Iterable[Check] | None = None) -> dict:
                 "locations": [
                     {
                         "physicalLocation": {
-                            "artifactLocation": {
-                                "uri": Path(finding.file_path).as_posix()
-                            },
+                            "artifactLocation": {"uri": _artifact_uri(finding.file_path)},
                             # SARIF requires a 1-based line. Line numbers come
                             # from a regex scan of the source, so guard the case
                             # where that finds nothing.
@@ -144,12 +162,25 @@ def to_sarif(result: ScanResult, checks: Iterable[Check] | None = None) -> dict:
             "locations": [
                 {
                     "physicalLocation": {
-                        "artifactLocation": {"uri": Path(error["file"]).as_posix()}
+                        "artifactLocation": {"uri": _artifact_uri(error["file"])}
                     }
                 }
             ],
         }
         for error in result.parse_errors
+    ] + [
+        {
+            "level": "error",
+            "message": {
+                "text": f"check {error['check_id']} failed to run: {error['error']}"
+            },
+            "associatedRule": (
+                {"id": error["check_id"], "index": rule_index[error["check_id"]]}
+                if error["check_id"] in rule_index
+                else {"id": error["check_id"]}
+            ),
+        }
+        for error in result.check_errors
     ]
 
     return {
@@ -167,7 +198,7 @@ def to_sarif(result: ScanResult, checks: Iterable[Check] | None = None) -> dict:
                 },
                 "invocations": [
                     {
-                        "executionSuccessful": not result.parse_errors,
+                        "executionSuccessful": not (result.parse_errors or result.check_errors),
                         "toolExecutionNotifications": notifications,
                     }
                 ],
