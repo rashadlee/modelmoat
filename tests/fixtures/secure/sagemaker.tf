@@ -24,3 +24,13 @@ resource "aws_sagemaker_endpoint" "llm" {
   name                 = "prod-llm"
   endpoint_config_name = aws_sagemaker_endpoint_configuration.llm.name
 }
+resource "aws_sagemaker_domain" "studio" {
+  domain_name              = "prod-studio"
+  auth_mode                = "IAM"
+  vpc_id                   = aws_vpc.main.id
+  subnet_ids               = [aws_subnet.private_a.id]
+  app_network_access_type  = "VpcOnly"
+  default_user_settings {
+    execution_role = aws_iam_role.sm_exec.arn
+  }
+}
