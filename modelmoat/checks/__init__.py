@@ -1,5 +1,6 @@
 """Check registry."""
 
+from .apigateway import APIGatewayAIProxyAuthCheck
 from .azure_openai import AzureOpenAINetworkCheck
 from .bedrock_agentcore import BedrockAgentCoreGatewayCheck
 from .datastores import VectorDataStoreCheck
@@ -22,4 +23,5 @@ ALL_CHECKS = [
     AzureOpenAINetworkCheck(),
     BedrockAgentCoreGatewayCheck(),
     VertexAIReasoningEngineCheck(),
+    APIGatewayAIProxyAuthCheck(),
 ]

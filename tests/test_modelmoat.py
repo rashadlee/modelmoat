@@ -73,6 +73,7 @@ def test_every_check_fires_on_insecure_stack():
         "AZR-001",
         "BRK-001",
         "GCP-001",
+        "AGW-001",
     } <= ids
 
 
@@ -349,6 +350,43 @@ def test_reasoning_engine_fingerprints_are_distinct():
 def test_reasoning_engine_with_psc_and_cmek_stays_silent():
     named = {f.resource_name for f in scan(SECURE).findings}
     assert "prod_agent" not in named
+
+
+# --------------------------------------------------------------------- #
+# AGW-001: API Gateway REST methods proxying to Bedrock or SageMaker    #
+# --------------------------------------------------------------------- #
+def test_unauthenticated_ai_proxy_methods_are_critical():
+    # predict_post's integration links to its method via a reference to the
+    # method's own http_method attribute (runtime.sagemaker); invoke_post
+    # and agent_post write http_method as a literal on both sides instead,
+    # exercising the (rest_api_id, resource_id, http_method) triple match
+    # (bedrock-runtime and bedrock-agent-runtime respectively).
+    hits = [f for f in scan(INSECURE).findings if f.check_id == "AGW-001"]
+    names = {f.resource_name for f in hits}
+    assert names == {"predict_post", "invoke_post", "agent_post"}
+    assert all(f.severity == "CRITICAL" for f in hits)
+
+
+def test_iam_authorization_on_the_same_sagemaker_proxy_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "predict_post" not in named
+
+
+def test_unauthenticated_lambda_proxy_stays_silent():
+    # Generic API security - no proof the backend is an AI service - is out
+    # of scope, even though authorization is "NONE".
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "webhook_post" not in named
+
+
+def test_private_rest_api_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "internal_predict_post" not in named
+
+
+def test_unknown_authorization_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "from_variable_post" not in named
 
 
 # --------------------------------------------------------------------- #
