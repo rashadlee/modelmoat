@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "modelmoat"
-version = "0.3.0"
+version = "0.4.0"
 description = "Static analysis for AI infrastructure security in Terraform. Finds misconfigured SageMaker, Bedrock IAM, model artifact buckets, missing PrivateLink, and exposed vector databases before they deploy."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "modelmoat contributors" }]
-keywords = ["terraform", "security", "static-analysis", "ai-security", "sagemaker", "bedrock", "azure-openai", "vertex-ai", "iac"]
+keywords = ["terraform", "security", "static-analysis", "ai-security", "sagemaker", "bedrock", "azure-openai", "vertex-ai", "vector-database", "iac"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",

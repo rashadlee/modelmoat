@@ -2,6 +2,135 @@
 
 Notable changes to modelmoat. Versions follow [semantic versioning](https://semver.org).
 
+## 0.4.0 - 2026-08-30
+
+### Changed
+
+- `--json` and `--sarif` now fail closed by default on a parse error: a scan
+  exits 1 and no longer looks like a clean pass when a file could not be
+  read. Previously the error only showed up in `parse_errors` without
+  affecting the exit code, so a partial scan and a complete one were
+  indistinguishable to CI. `--allow-partial` restores the old lenient
+  behavior for interactive use.
+- A scan target with no supported Terraform files anywhere (no `.tf` or
+  `.tf.json`) is now a hard error by default instead of a silent
+  zero-finding pass. `--allow-empty` restores the old behavior.
+
+If you pipe modelmoat's machine output into something else, either of these
+can change what your pipeline does on inputs it previously accepted quietly.
+
+### Added
+
+- AGW-001 flags an `aws_api_gateway_method` with `authorization = "NONE"`
+  whose integration proves, through the provider's documented
+  AWS-service-proxy `uri` format, that the backend is a SageMaker or Bedrock
+  runtime invocation. Scoped to REST API v1 only - API Gateway v2 has no
+  `integration_subtype` for either service, so the only v2 path there runs
+  through an opaque Lambda proxy, which is unprovable. CRITICAL: reachability
+  and absent auth are both proven, with no fallback credential check on the
+  client side.
+- VEC-003 flags a known self-hosted vector database image (`qdrant/qdrant`,
+  `semitechnologies/weaviate`, `milvusdb/milvus`) running on an
+  `aws_ecs_service` with `launch_type = "FARGATE"` and
+  `assign_public_ip = true`. HIGH, reachability only - none of the three
+  engines expose a Terraform-visible setting whose absence safely proves
+  authentication is off, the same trap VEC-002 already avoids for Weaviate.
+- VEC-001 now also covers OpenSearch Serverless: an
+  `aws_opensearchserverless_security_policy` (`type = "network"`) with
+  `AllowFromPublic = true` on a collection-type rule. HIGH, not CRITICAL - a
+  data access policy and SigV4-signed credentials are still required for
+  every request regardless of network settings.
+- VPC-001 now also covers ECS Fargate: a task calling Bedrock or SageMaker
+  with no matching interface VPC endpoint. MEDIUM only, never LOW, since
+  Fargate's `awsvpc` networking mode has no "outside a VPC" state the way a
+  Lambda does.
+- SMK-001 now also covers SageMaker Studio domains:
+  `app_network_access_type` absent or explicitly `"PublicInternetOnly"`.
+  HIGH, matching the existing model finding - non-EFS app traffic exits
+  through a SageMaker-managed network interface instead of your VPC, though
+  Studio access itself always requires IAM or SSO authentication regardless
+  of this setting.
+- S3-001 now also treats a bucket as AI-relevant when an
+  `aws_bedrockagent_data_source` points its `bucket_arn` at it, even when
+  the bucket's own name and tags give the keyword matcher nothing. A direct
+  reference is stronger evidence than a name guess, so it is checked first
+  and supersedes the keyword scan when it hits.
+
+### Fixed
+
+An independent security review of 0.3.0 by Matthew Figueroa
+([@MathewFigueroa](https://github.com/MathewFigueroa)) found 21 issues in
+the scanner's own detection integrity, fail-safety, and release pipeline -
+0 Critical, 9 High, 8 Medium, 4 Low. All are resolved:
+
+- Terraform module boundaries were never tracked, so an identically-labeled
+  resource in an unrelated directory (a sibling module, a vendored copy)
+  could stand in for the real one during cross-resource correlation. Every
+  resource now carries its module, and correlation is scoped to it.
+- A resource with a literal `count = 0` or empty `for_each` registered as
+  deployed, so a disabled decoy control could prove a real exposure safe.
+  Proven-zero cardinality now excludes a resource from the graph; unresolved
+  (variable-driven) cardinality is tracked separately, so a risky resource
+  with unprovable cardinality still gets evaluated, while a compensating
+  control with unprovable cardinality never gets credited as protecting
+  anything.
+- S3-001 could report several distinct problems on one bucket under a
+  single fingerprint, so baselining the mildest silently suppressed the
+  worst. Every branch now has its own detail token.
+- A finding that grew more severe than its recorded baseline entry stayed
+  suppressed instead of becoming active, so accepted low-risk debt could
+  become a Critical exposure without failing CI.
+- A parse failure and a `.tf.json` file (previously silently unscanned)
+  could each produce a clean-looking zero-finding scan - covered by the
+  behavior change above.
+- S3 and OpenSearch policy checks did not resolve a
+  `data.aws_iam_policy_document` reference, so a public policy authored
+  that way was invisible. IAM-001 did not evaluate `NotAction`/`NotResource`,
+  so a policy granting nearly everything except a short exclusion list
+  passed as safe.
+- Discovery followed symlinks and had no size or file-count limits, so
+  scanning an untrusted checkout could read outside the requested root or
+  exhaust memory on a crafted input.
+- VPC endpoint matching credited any service-name substring anywhere in the
+  project, regardless of module, VPC, or region, so an unrelated endpoint
+  could suppress a real finding.
+- A crafted or partially-edited attribute (a boolean where a list was
+  expected) could crash a check and take down the whole scan silently.
+  Each check's failures are now isolated and reported, never swallowed.
+- Public-principal detection ignored policy `Condition` blocks entirely, so
+  `Principal: "*"` narrowed by `aws:PrincipalOrgID` or a VPC endpoint
+  condition was still reported as open to the entire internet.
+- Human-readable output interpolated resource names directly into terminal
+  markup, so a maliciously named resource could throw an exception and lose
+  every finding, or forge terminal styling.
+- Line-number lookup rescanned the whole file per resource, which made
+  large generated Terraform disproportionately expensive to scan.
+- SARIF output was not validated against the official schema, and there was
+  no test that installed the actual packaged wheel and ran it.
+- Managed-policy detection suffix-matched an ARN, so a customer-managed
+  policy merely named to look like `AmazonBedrockFullAccess` matched as if
+  it were AWS's own. A variable-driven public-access-block flag was
+  described as "disabled" instead of unresolved.
+- Release asset generation could silently use the wrong version and did not
+  verify its own fixture results before writing output.
+
+### CI and release hardening
+
+- GitHub Actions are pinned to full commit SHAs instead of mutable tags,
+  with `permissions: contents: read`, `persist-credentials: false`, a job
+  timeout, and cancel-in-progress concurrency.
+- Dependencies are locked and hash-verified in CI
+  (`pip install --require-hashes`) instead of resolved from an open range
+  on every run.
+- A new release workflow builds once, attests build provenance, and
+  publishes to PyPI through Trusted Publishing (OIDC) - no long-lived token
+  stored anywhere.
+
+### Acknowledgments
+
+Thanks to Matthew Figueroa ([@MathewFigueroa](https://github.com/MathewFigueroa))
+for the independent security review behind most of this release.
+
 ## 0.3.0 - 2026-08-28
 
 ### Added

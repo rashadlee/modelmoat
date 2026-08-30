@@ -79,8 +79,8 @@ Python 3.10 or newer.
 Real output from the test fixtures in this repo:
 
 ```
-modelmoat 0.3.0 scanned 10 Terraform file(s)
-  CRITICAL: 5  HIGH: 13  MEDIUM: 4  LOW: 3
+modelmoat 0.4.0 scanned 15 Terraform file(s)
+  CRITICAL: 12  HIGH: 19  MEDIUM: 6  LOW: 3
 
 CRITICAL S3-001  aws_s3_bucket.datasets
          tests/fixtures/insecure/s3_bad.tf:11
@@ -105,16 +105,18 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 
 | ID | What it finds | Severity range |
 |----|---------------|----------------|
-| SMK-001 | SageMaker models with no `vpc_config`, so containers run on the managed network with direct internet egress | HIGH |
+| SMK-001 | SageMaker models with no `vpc_config`, or Studio domains defaulting to public network access for app traffic | HIGH |
 | IAM-001 | Wildcard AI grants (`bedrock:*`, `sagemaker:*` on `Resource "*"`) in inline policies, customer managed policies, policy documents, or attached AWS `FullAccess` policies | HIGH |
-| S3-001 | AI-related buckets exposed by a public ACL or a `Principal "*"` policy, plus weakened or missing public access blocks | CRITICAL to LOW |
-| VPC-001 | Lambda functions calling Bedrock or SageMaker with no matching interface VPC endpoint in the project | MEDIUM to LOW |
-| VEC-001 | OpenSearch, pgvector-capable Postgres, and AI-named ElastiCache missing encryption or network isolation | CRITICAL to LOW |
+| S3-001 | AI-related buckets exposed by a public ACL or a `Principal "*"` policy, plus weakened or missing public access blocks. A bucket backing a Bedrock Knowledge Base counts even with a name that gives no keyword hint | CRITICAL to LOW |
+| VPC-001 | Lambda functions or ECS Fargate tasks calling Bedrock or SageMaker with no matching interface VPC endpoint in the project | MEDIUM to LOW |
+| VEC-001 | OpenSearch (including Serverless), pgvector-capable Postgres, and AI-named ElastiCache missing encryption or network isolation | CRITICAL to LOW |
 | VEC-002 | Self-hosted Weaviate accepting unauthenticated requests, via a `helm_release` value or a container environment variable | HIGH |
+| VEC-003 | Self-hosted vector databases (Qdrant, Weaviate, Milvus) publicly reachable on ECS Fargate | HIGH |
 | PIN-001 | Pinecone `OrgOwner` granted at organization scope to a service account or API key | HIGH |
 | AZR-001 | Azure OpenAI / AI Services accounts reachable from the public internet, via `public_network_access_enabled` or a missing `network_acls` deny rule | HIGH |
 | BRK-001 | Bedrock AgentCore gateways with `authorizer_type = "NONE"`, so any caller can invoke every tool the gateway exposes | CRITICAL |
 | GCP-001 | Vertex AI Reasoning Engines with no Private Service Connect network attachment or no CMEK `encryption_spec` | HIGH |
+| AGW-001 | API Gateway REST methods with no authorization, proxying directly to a Bedrock or SageMaker runtime invocation | CRITICAL |
 
 -----
 
