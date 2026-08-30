@@ -122,6 +122,32 @@ def test_vpc_lambda_without_endpoint_is_flagged():
     )
 
 
+def test_fargate_service_without_endpoint_is_medium_never_low():
+    # ECS Fargate always runs inside a VPC (awsvpc network_mode is mandatory),
+    # so unlike a Lambda missing vpc_config there is no LOW "outside a VPC"
+    # tier to hit here - only MEDIUM, or nothing.
+    hits = [f for f in scan(INSECURE).findings if f.check_id == "VPC-001"]
+    fargate = [f for f in hits if f.resource_name == "fargate_agent"]
+    assert len(fargate) == 1
+    assert fargate[0].severity == "MEDIUM"
+    assert fargate[0].detail == "bedrock"
+
+
+def test_ec2_launch_type_ecs_service_is_not_flagged():
+    # Bridge/host networking on EC2 launch type isn't verified by this check,
+    # so it must stay silent even with the identical Bedrock signal present.
+    named = {f.resource_name for f in scan(INSECURE).findings if f.check_id == "VPC-001"}
+    assert "ec2_agent" not in named
+
+
+def test_fargate_service_with_matching_endpoint_stays_silent():
+    # Same Bedrock signal as the insecure fixture, but network.tf's
+    # bedrock_runtime interface endpoint covers it - proves endpoint
+    # matching applies across resource types, not just Lambda.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "fargate_agent" not in named
+
+
 def test_public_acl_on_training_bucket_is_critical():
     result = scan(INSECURE)
     assert any(

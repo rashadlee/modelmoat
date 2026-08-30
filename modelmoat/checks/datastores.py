@@ -30,8 +30,6 @@ serverless equivalent of BRK-001's authorizer_type = "NONE" with no fallback.
 
 from __future__ import annotations
 
-import json
-
 from ..graph import (
     ProjectGraph,
     Resource,
@@ -41,42 +39,8 @@ from ..graph import (
     missing_or_false,
     truthy,
 )
-from ..policy import _hcl_object_to_json, allows_public_principal, parse_policy_document
+from ..policy import allows_public_principal, parse_json_value, parse_policy_document
 from ..scanner import Finding
-
-
-def _parse_network_policy(value) -> list | None:
-    """Parse an OpenSearch Serverless network policy into a list of rule objects.
-
-    Unlike an IAM policy document this is a JSON array at the top level, not
-    an object, so it mirrors policy.parse_policy_document's unwrapping (the
-    ${...} hcl2 wraps every function call in, then jsonencode(...) itself)
-    but checks for a list result instead of a dict. A value that still
-    contains an unresolved reference after unwrapping fails to parse as JSON
-    or as an HCL object literal and correctly falls through to None.
-    """
-    if isinstance(value, list):
-        return value
-    if not isinstance(value, str):
-        return None
-
-    text = value.strip()
-    if text.startswith("${") and text.endswith("}"):
-        text = text[2:-1].strip()
-    if text.startswith("jsonencode(") and text.endswith(")"):
-        text = text[len("jsonencode("):-1].strip()
-
-    try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, list) else None
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    try:
-        parsed = json.loads(_hcl_object_to_json(text))
-        return parsed if isinstance(parsed, list) else None
-    except (json.JSONDecodeError, ValueError):
-        return None
 
 
 class VectorDataStoreCheck:
@@ -197,7 +161,7 @@ class VectorDataStoreCheck:
             if str(policy.config.get("type", "")).strip().lower() != "network":
                 continue
 
-            entries = _parse_network_policy(policy.config.get("policy"))
+            entries = parse_json_value(policy.config.get("policy"), list)
             if entries is None:
                 continue
 

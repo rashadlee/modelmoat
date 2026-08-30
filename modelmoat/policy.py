@@ -67,9 +67,18 @@ def _hcl_object_to_json(text: str) -> str:
     return _HCL_KEY.sub(replace, text)
 
 
-def parse_policy_document(value) -> dict | None:
-    """Parse a policy attribute into a dict, or None when it cannot be resolved."""
-    if isinstance(value, dict):
+def parse_json_value(value, expected_type: type):
+    """Parse a Terraform string attribute into `expected_type` (dict or list).
+
+    Covers all the shapes hcl2 8.x hands back for a jsonencode() call, a raw
+    JSON heredoc, or an HCL object/array literal: the whole value wrapped in
+    ${...} (every function call gets this treatment, not just ones with real
+    unknowns), then jsonencode(...) itself, then either valid JSON or HCL
+    syntax using = instead of :. A value that still contains an unresolved
+    reference after unwrapping fails both parse attempts and correctly falls
+    through to None - modelmoat does not flag what it cannot prove.
+    """
+    if isinstance(value, expected_type):
         return value
     if not isinstance(value, str):
         return None
@@ -82,15 +91,20 @@ def parse_policy_document(value) -> dict | None:
 
     try:
         parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else None
+        return parsed if isinstance(parsed, expected_type) else None
     except (json.JSONDecodeError, ValueError):
         pass
 
     try:
         parsed = json.loads(_hcl_object_to_json(text))
-        return parsed if isinstance(parsed, dict) else None
+        return parsed if isinstance(parsed, expected_type) else None
     except (json.JSONDecodeError, ValueError):
         return None
+
+
+def parse_policy_document(value) -> dict | None:
+    """Parse a policy attribute into a dict, or None when it cannot be resolved."""
+    return parse_json_value(value, dict)
 
 
 def iter_statements(doc: dict):
