@@ -17,7 +17,7 @@ Block Public Access overrides ACLs and policies.
 from __future__ import annotations
 
 from ..graph import ProjectGraph, Resource, ai_tokens_in, extract_ref, truthy
-from ..policy import allows_public_principal, parse_policy_document
+from ..policy import resolve_public_principal
 from ..scanner import Finding
 
 _DOCS = (
@@ -41,9 +41,24 @@ class ModelArtifactBucketCheck:
         findings: list[Finding] = []
 
         buckets = graph.by_type("aws_s3_bucket")
-        access_blocks = graph.by_type("aws_s3_bucket_public_access_block")
+        # A public access block is a compensating control here - credited
+        # with protecting a bucket only when its own cardinality is
+        # confirmed, never when count/for_each on the block itself is
+        # unresolved. modelmoat cannot prove an unresolved block exists, so
+        # it must not get to prove the bucket is safe.
+        access_blocks = [
+            b
+            for b in graph.by_type("aws_s3_bucket_public_access_block")
+            if not b.unresolved_cardinality
+        ]
         acl_resources = graph.by_type("aws_s3_bucket_acl")
         bucket_policies = graph.by_type("aws_s3_bucket_policy")
+        # Keyed by (module, label): a data.aws_iam_policy_document with the
+        # same label in an unrelated directory must never resolve a bucket
+        # policy reference here.
+        data_docs = {
+            (d.module, d.name): d for d in graph.data_by_type("aws_iam_policy_document")
+        }
 
         for bucket in buckets:
             tags = bucket.config.get("tags") or {}
@@ -83,18 +98,21 @@ class ModelArtifactBucketCheck:
                             "aws_s3_bucket_public_access_block with all four protections "
                             "enabled. Serve artifacts through presigned URLs or VPC "
                             "endpoints instead.",
+                            "public_acl",
                         )
                     )
                     break
 
-            # Evidence 2: bucket policy granting to Principal "*".
+            # Evidence 2: bucket policy granting to Principal "*", inline or
+            # via a data.aws_iam_policy_document reference.
             for policy in self._related(bucket, bucket_policies):
-                doc = parse_policy_document(policy.config.get("policy"))
-                is_public = (
-                    allows_public_principal(doc)
-                    if doc is not None
-                    else '"principal": "*"' in str(policy.config.get("policy", "")).lower()
+                is_public = resolve_public_principal(
+                    policy.config.get("policy"), data_docs, bucket.module
                 )
+                if is_public is None:
+                    is_public = (
+                        '"principal": "*"' in str(policy.config.get("policy", "")).lower()
+                    )
                 if is_public:
                     exposed = True
                     findings.append(
@@ -108,6 +126,7 @@ class ModelArtifactBucketCheck:
                             "Restrict the policy principal to specific roles or "
                             "accounts and add an aws_s3_bucket_public_access_block "
                             "with all four protections enabled.",
+                            "public_policy",
                         )
                     )
                     break
@@ -130,6 +149,7 @@ class ModelArtifactBucketCheck:
                             "policies could take effect.",
                             "Set all four public access block arguments to true. They "
                             "default to false when omitted.",
+                            "weakened_pab",
                         )
                     )
                     break
@@ -148,16 +168,24 @@ class ModelArtifactBucketCheck:
                         "Add an explicit aws_s3_bucket_public_access_block with all "
                         "four protections enabled so the safety net survives account "
                         "setting changes.",
+                        "missing_pab",
                     )
                 )
 
         return findings
 
     def _related(self, bucket: Resource, resources: list[Resource]) -> list[Resource]:
-        """Resources whose bucket argument points at this bucket, across files."""
+        """Resources whose bucket argument points at this bucket, across files
+        but within the same Terraform module. A same-named bucket in a
+        different directory is a different resource - correlating across that
+        boundary would let an unrelated module's protections silently cover
+        for this bucket's real exposure.
+        """
         related = []
         declared_name = bucket.config.get("bucket")
         for resource in resources:
+            if resource.module != bucket.module:
+                continue
             ref = resource.config.get("bucket")
             label = extract_ref(ref, "aws_s3_bucket")
             literal_match = isinstance(ref, str) and ref in (bucket.name, declared_name)
@@ -166,7 +194,7 @@ class ModelArtifactBucketCheck:
         return related
 
     def _finding(
-        self, bucket: Resource, severity: str, message: str, remediation: str
+        self, bucket: Resource, severity: str, message: str, remediation: str, detail: str
     ) -> Finding:
         return Finding(
             check_id=self.check_id,
@@ -179,4 +207,5 @@ class ModelArtifactBucketCheck:
             message=message,
             remediation=remediation,
             docs_url=_DOCS,
+            detail=detail,
         )

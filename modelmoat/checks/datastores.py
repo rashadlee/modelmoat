@@ -39,7 +39,7 @@ from ..graph import (
     missing_or_false,
     truthy,
 )
-from ..policy import allows_public_principal, parse_json_value, parse_policy_document
+from ..policy import parse_json_value, resolve_public_principal
 from ..scanner import Finding
 
 
@@ -60,6 +60,12 @@ class VectorDataStoreCheck:
     # ------------------------------------------------------------------ #
     def _opensearch(self, graph: ProjectGraph) -> list[Finding]:
         findings: list[Finding] = []
+        # Keyed by (module, label): a data.aws_iam_policy_document with the
+        # same label in an unrelated directory must never resolve an access
+        # policy reference here.
+        data_docs = {
+            (d.module, d.name): d for d in graph.data_by_type("aws_iam_policy_document")
+        }
 
         for domain in graph.by_type("aws_opensearch_domain", "aws_elasticsearch_domain"):
             at_rest = first_block(domain.config, "encrypt_at_rest")
@@ -98,8 +104,10 @@ class VectorDataStoreCheck:
 
             vpc_options = first_block(domain.config, "vpc_options")
             if vpc_options is None:
-                access_doc = parse_policy_document(domain.config.get("access_policies"))
-                if access_doc is not None and allows_public_principal(access_doc):
+                is_public = resolve_public_principal(
+                    domain.config.get("access_policies"), data_docs, domain.module
+                )
+                if is_public:
                     findings.append(
                         self._finding(
                             domain,

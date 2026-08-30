@@ -87,7 +87,14 @@ def load_baseline(path: Path) -> dict[str, dict]:
 def apply_baseline(
     findings: list[Finding], baseline: dict[str, dict]
 ) -> BaselineComparison:
-    """Split findings into those the baseline covers and those it does not."""
+    """Split findings into those the baseline covers and those it does not.
+
+    A finding that got more severe than its recorded baseline entry is no
+    longer accepted risk, so it goes back into `active` (and therefore back
+    into the exit code, JSON, and SARIF output) rather than staying
+    suppressed. It is also listed in `escalated` so the CLI can call out
+    specifically what changed.
+    """
     comparison = BaselineComparison()
     matched: set[str] = set()
 
@@ -98,13 +105,15 @@ def apply_baseline(
             continue
 
         matched.add(finding.fingerprint)
-        comparison.suppressed.append(finding)
 
         recorded = entry.get("severity")
         if isinstance(recorded, str) and SEVERITY_RANK.get(
             finding.severity, 0
         ) > SEVERITY_RANK.get(recorded, 0):
             comparison.escalated.append((finding, recorded))
+            comparison.active.append(finding)
+        else:
+            comparison.suppressed.append(finding)
 
     comparison.stale = [
         entry for fingerprint, entry in baseline.items() if fingerprint not in matched
