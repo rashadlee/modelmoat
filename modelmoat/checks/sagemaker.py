@@ -1,6 +1,6 @@
 """SMK-001: SageMaker networking - traffic paths that bypass the VPC.
 
-Two distinct resources, one theme:
+Three distinct resources, one theme:
 
   aws_sagemaker_model    vpc_config lives here, not on
                           aws_sagemaker_endpoint_configuration. A model
@@ -21,11 +21,34 @@ Two distinct resources, one theme:
                           reachable - access always requires IAM or SSO
                           authentication and a presigned domain URL regardless
                           of this setting.
+  aws_sagemaker_notebook_instance
+                          direct_internet_access defaults to "Enabled", and
+                          specifying subnet_id does not turn this off by
+                          itself: per AWS's own documentation, traffic within
+                          the VPC's CIDR goes through the VPC's network
+                          interface, but "all other traffic" - including
+                          calls to the SageMaker API and training/hosting
+                          endpoints unless VPC endpoints exist - goes through
+                          a second, SageMaker-managed interface, "essentially
+                          through the public internet." Disabling it requires
+                          setting the attribute explicitly (and then requires
+                          subnet_id and security_groups too), the same
+                          "explicit VpcOnly required" shape as the Studio
+                          domain check above.
+                          root_access also defaults to "Enabled" and is
+                          judged separately: it grants the notebook's user
+                          root on the underlying instance, which is a
+                          blast-radius question (what a compromised or
+                          careless session can do to the instance and the
+                          IAM role attached to it), not a network traffic
+                          path, so it does not share the network finding's
+                          severity.
 
-In both cases invoking or reaching the resource still requires an
+In all three cases invoking or reaching the resource still requires an
 authenticated request (SigV4-signed IAM for a model endpoint, IAM/SSO for
-Studio), so these are exposures of the runtime traffic path, not open URLs,
-and the findings say so.
+Studio, a presigned URL for a notebook instance), so these are exposures of
+the runtime traffic path or blast radius, not open URLs, and the findings
+say so.
 """
 
 from __future__ import annotations
@@ -37,6 +60,10 @@ _MODEL_DOCS_URL = "https://docs.aws.amazon.com/sagemaker/latest/dg/host-vpc.html
 _DOMAIN_DOCS_URL = (
     "https://docs.aws.amazon.com/sagemaker/latest/dg/"
     "studio-notebooks-and-internet-access.html"
+)
+_NOTEBOOK_DOCS_URL = (
+    "https://docs.aws.amazon.com/sagemaker/latest/dg/"
+    "appendix-notebook-and-internet-access.html"
 )
 
 
@@ -52,6 +79,20 @@ def _is_public_internet_only(value) -> bool:
     return value.strip() == "PublicInternetOnly"
 
 
+def _is_enabled(value) -> bool:
+    """True when absent (the provider default) or explicitly "Enabled".
+
+    Shared by direct_internet_access and root_access on
+    aws_sagemaker_notebook_instance - both default to "Enabled" and use the
+    same Enabled/Disabled vocabulary. Unknown values are never flagged.
+    """
+    if value is None:
+        return True
+    if not isinstance(value, str) or is_unknown(value):
+        return False
+    return value.strip() == "Enabled"
+
+
 class SageMakerNetworkCheck:
     check_id = "SMK-001"
     check_name = "SageMaker Missing Network Isolation"
@@ -60,6 +101,7 @@ class SageMakerNetworkCheck:
         findings: list[Finding] = []
         findings.extend(self._models(graph))
         findings.extend(self._domains(graph))
+        findings.extend(self._notebook_instances(graph))
         return findings
 
     # ------------------------------------------------------------------ #
@@ -142,6 +184,84 @@ class SageMakerNetworkCheck:
                     detail="app_network_access_type",
                 )
             )
+
+        return findings
+
+    # ------------------------------------------------------------------ #
+    # aws_sagemaker_notebook_instance                                     #
+    # ------------------------------------------------------------------ #
+    def _notebook_instances(self, graph: ProjectGraph) -> list[Finding]:
+        findings: list[Finding] = []
+
+        for notebook in graph.by_type("aws_sagemaker_notebook_instance"):
+            direct_internet = notebook.config.get("direct_internet_access")
+            if _is_enabled(direct_internet):
+                state = (
+                    'has no direct_internet_access set, which defaults to '
+                    '"Enabled"'
+                    if direct_internet is None
+                    else 'sets direct_internet_access = "Enabled"'
+                )
+                findings.append(
+                    self._finding(
+                        notebook,
+                        "HIGH",
+                        (
+                            f"SageMaker notebook instance '{notebook.name}' "
+                            f"{state}. Traffic within your VPC's CIDR goes "
+                            "through your VPC's network interface, but all "
+                            "other traffic - including SageMaker API and "
+                            "training/hosting calls unless VPC endpoints "
+                            "exist - goes through a second, SageMaker-managed "
+                            "interface, bypassing your VPC's egress controls "
+                            "regardless of whether subnet_id is also set. "
+                            "Reaching the notebook itself still requires a "
+                            "presigned URL and IAM authorization, so this "
+                            "exposes the traffic path, not the notebook UI."
+                        ),
+                        (
+                            "Set direct_internet_access = \"Disabled\" on "
+                            f"aws_sagemaker_notebook_instance.{notebook.name}, "
+                            "and provide subnet_id and security_groups plus "
+                            "either a NAT gateway or interface VPC endpoints "
+                            "for the services the notebook needs, so its "
+                            "traffic stays inside your VPC."
+                        ),
+                        _NOTEBOOK_DOCS_URL,
+                        detail="direct_internet_access",
+                    )
+                )
+
+            root_access = notebook.config.get("root_access")
+            if _is_enabled(root_access):
+                state = (
+                    'has no root_access set, which defaults to "Enabled"'
+                    if root_access is None
+                    else 'sets root_access = "Enabled"'
+                )
+                findings.append(
+                    self._finding(
+                        notebook,
+                        "LOW",
+                        (
+                            f"SageMaker notebook instance '{notebook.name}' "
+                            f"{state}. Whoever can open the notebook has root "
+                            "on the underlying instance, widening what a "
+                            "compromised or careless session can do to it "
+                            "and to the IAM role attached to it. This is a "
+                            "blast-radius setting on the instance, not a "
+                            "network exposure."
+                        ),
+                        (
+                            "Set root_access = \"Disabled\" on "
+                            f"aws_sagemaker_notebook_instance.{notebook.name} "
+                            "unless the notebook's users specifically need "
+                            "root to install system packages."
+                        ),
+                        _NOTEBOOK_DOCS_URL,
+                        detail="root_access",
+                    )
+                )
 
         return findings
 

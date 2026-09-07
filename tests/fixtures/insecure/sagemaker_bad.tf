@@ -24,3 +24,18 @@ resource "aws_sagemaker_domain" "explicit_public" {
     execution_role = aws_iam_role.sm_exec.arn
   }
 }
+resource "aws_sagemaker_notebook_instance" "exposed_notebook" {
+  name          = "exposed-notebook"
+  role_arn      = aws_iam_role.sm_exec.arn
+  instance_type = "ml.t3.medium"
+}
+# direct_internet_access set explicitly (not just left absent), with
+# root_access explicitly turned off, so this fixture also proves the two
+# findings are independent - only the network one should fire here.
+resource "aws_sagemaker_notebook_instance" "explicit_open_notebook" {
+  name                  = "explicit-open-notebook"
+  role_arn              = aws_iam_role.sm_exec.arn
+  instance_type         = "ml.t3.medium"
+  direct_internet_access = "Enabled"
+  root_access            = "Disabled"
+}

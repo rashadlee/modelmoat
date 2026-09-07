@@ -46,3 +46,24 @@ resource "aws_sagemaker_domain" "from_variable" {
     execution_role = aws_iam_role.sm_exec.arn
   }
 }
+resource "aws_sagemaker_notebook_instance" "hardened" {
+  name                    = "prod-notebook"
+  role_arn                = aws_iam_role.sm_exec.arn
+  instance_type           = "ml.t3.medium"
+  direct_internet_access  = "Disabled"
+  root_access             = "Disabled"
+  subnet_id               = aws_subnet.private_a.id
+  security_groups         = [aws_security_group.sm.id]
+  kms_key_id              = aws_kms_key.sm.arn
+}
+# direct_internet_access from a variable is unprovable, so it must not be
+# flagged - the same rule the Studio domain check above follows.
+resource "aws_sagemaker_notebook_instance" "from_variable" {
+  name                    = "from-variable-notebook"
+  role_arn                = aws_iam_role.sm_exec.arn
+  instance_type           = "ml.t3.medium"
+  direct_internet_access  = var.direct_internet_access
+  root_access             = "Disabled"
+  subnet_id               = aws_subnet.private_a.id
+  security_groups         = [aws_security_group.sm.id]
+}
