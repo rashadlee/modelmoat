@@ -2,6 +2,45 @@
 
 Notable changes to modelmoat. Versions follow [semantic versioning](https://semver.org).
 
+## 0.5.0 - 2026-09-07
+
+### Added
+
+- SMK-001 now also covers SageMaker notebook instances:
+  `direct_internet_access` absent or explicitly `"Enabled"` (HIGH -
+  non-VPC-CIDR traffic, including SageMaker API and training/hosting calls,
+  exits through a second, SageMaker-managed interface regardless of whether
+  `subnet_id` is also set), and `root_access` absent or explicitly
+  `"Enabled"` (LOW - blast radius on the instance, not a network exposure,
+  judged and reported independently of the network finding).
+- SMK-001 now also covers SageMaker training jobs: no `vpc_config` (HIGH,
+  the same finding shape as the existing model check - training data
+  channels and inter-container traffic run on the SageMaker managed network
+  instead of the VPC), and `enable_inter_container_traffic_encryption`
+  absent or `false` on a job with more than one instance (MEDIUM - protects
+  model weights and gradients moving between compute instances, not the raw
+  training dataset; meaningless below two instances per AWS's own docs, so
+  it is only evaluated once `instance_count` is provably greater than one).
+- New check SMK-002: an `aws_sagemaker_model_package_group_policy` granting
+  `Principal "*"`. HIGH, not CRITICAL - SageMaker's control plane always
+  requires a signed request regardless of this policy, so `"*"` removes the
+  account-scoping that cross-account model registry sharing is supposed to
+  have, rather than creating anonymous access the way an S3 bucket policy
+  with the same principal would.
+
+### Fixed
+
+- The shared policy-document parser failed to parse an entire policy
+  document whenever any field held a bare, unquoted resource-attribute
+  reference (`Resource = [aws_x.name.arn]`, the idiomatic HCL form for a
+  resource-level action with nothing to append) - even when a field as
+  load-bearing as `Principal` sat right next to it, fully static and
+  provable regardless of what that reference resolved to. Bare references
+  are now replaced with an opaque placeholder during parsing instead of
+  failing the whole document, which can only surface a previously-missed
+  finding, never manufacture a new one. Affects every check that evaluates
+  a policy document: S3-001, AGW-001, IAM-001, and the new SMK-002.
+
 ## 0.4.2 - 2026-08-30
 
 ### Changed
