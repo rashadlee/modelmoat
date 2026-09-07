@@ -69,6 +69,32 @@ resource "aws_sagemaker_training_job" "hardened" {
     max_runtime_in_seconds = 3600
   }
 }
+# Multiple instances (where enable_inter_container_traffic_encryption
+# actually matters, unlike "hardened" above) with it explicitly enabled.
+resource "aws_sagemaker_training_job" "distributed_encrypted" {
+  training_job_name = "prod-distributed-training-job"
+  role_arn           = aws_iam_role.sm_exec.arn
+  vpc_config {
+    security_group_ids = [aws_security_group.sm.id]
+    subnets            = [aws_subnet.private_a.id]
+  }
+  enable_inter_container_traffic_encryption = true
+  algorithm_specification {
+    training_image     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/train:latest"
+    training_input_mode = "File"
+  }
+  resource_config {
+    instance_count    = 4
+    instance_type     = "ml.g5.xlarge"
+    volume_size_in_gb = 50
+  }
+  output_data_config {
+    s3_output_path = "s3://acme-training-output/prod-distributed"
+  }
+  stopping_condition {
+    max_runtime_in_seconds = 3600
+  }
+}
 resource "aws_sagemaker_notebook_instance" "hardened" {
   name                    = "prod-notebook"
   role_arn                = aws_iam_role.sm_exec.arn

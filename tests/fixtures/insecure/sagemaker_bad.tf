@@ -43,6 +43,33 @@ resource "aws_sagemaker_training_job" "exposed_training" {
     max_runtime_in_seconds = 3600
   }
 }
+# vpc_config present (unlike exposed_training above), isolating this fixture
+# to the inter-container-traffic-encryption finding specifically - proves
+# the two findings are independent, the same shape as the notebook's
+# explicit_open_notebook case.
+resource "aws_sagemaker_training_job" "distributed_unencrypted" {
+  training_job_name = "distributed-unencrypted-job"
+  role_arn           = aws_iam_role.sm_exec.arn
+  vpc_config {
+    security_group_ids = [aws_security_group.sm.id]
+    subnets            = [aws_subnet.private_a.id]
+  }
+  algorithm_specification {
+    training_image     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/train:latest"
+    training_input_mode = "File"
+  }
+  resource_config {
+    instance_count    = 4
+    instance_type     = "ml.g5.xlarge"
+    volume_size_in_gb = 50
+  }
+  output_data_config {
+    s3_output_path = "s3://acme-training-output/distributed"
+  }
+  stopping_condition {
+    max_runtime_in_seconds = 3600
+  }
+}
 resource "aws_sagemaker_notebook_instance" "exposed_notebook" {
   name          = "exposed-notebook"
   role_arn      = aws_iam_role.sm_exec.arn

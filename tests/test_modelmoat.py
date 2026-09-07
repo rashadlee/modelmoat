@@ -746,6 +746,40 @@ def test_training_job_finding_detail_does_not_collide_with_model():
     assert model_hit.fingerprint != training_hit.fingerprint
 
 
+def test_training_job_multi_instance_missing_encryption_is_medium():
+    # vpc_config is present on this fixture (unlike exposed_training), so
+    # this isolates the inter-container-traffic-encryption finding as
+    # independent of the network finding above.
+    result = scan(INSECURE)
+    hits = [
+        f
+        for f in result.findings
+        if f.check_id == "SMK-001" and f.resource_name == "distributed_unencrypted"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "MEDIUM"
+    assert hits[0].detail == "enable_inter_container_traffic_encryption"
+
+
+def test_training_job_single_instance_stays_silent_for_encryption():
+    # enable_inter_container_traffic_encryption "doesn't affect training
+    # jobs with a single compute instance" per AWS's own docs - firing here
+    # would be a provably false claim, not just an overcautious one.
+    result = scan(INSECURE)
+    hits = [
+        f
+        for f in result.findings
+        if f.resource_name == "exposed_training"
+        and f.detail == "enable_inter_container_traffic_encryption"
+    ]
+    assert hits == []
+
+
+def test_training_job_distributed_encrypted_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "distributed_encrypted" not in named
+
+
 # --------------------------------------------------------------------- #
 # SMK-001: SageMaker notebook instance direct internet access and root  #
 # --------------------------------------------------------------------- #
@@ -807,11 +841,12 @@ def test_notebook_findings_have_distinct_details_from_model_and_domain():
     # domain's "app_network_access_type" detail.
     result = scan(INSECURE)
     smk_hits = [f for f in result.findings if f.check_id == "SMK-001"]
-    # model (1) + training job (1) + domain unset_access_type (1)
-    # + domain explicit_public (1)
+    # model (1) + training job exposed_training (1: vpc_config)
+    # + training job distributed_unencrypted (1: inter-container encryption)
+    # + domain unset_access_type (1) + domain explicit_public (1)
     # + notebook exposed_notebook (2: direct_internet_access, root_access)
     # + notebook explicit_open_notebook (1: direct_internet_access only)
-    assert len(smk_hits) == 7
+    assert len(smk_hits) == 8
     assert len({f.fingerprint for f in smk_hits}) == len(smk_hits)
 
 

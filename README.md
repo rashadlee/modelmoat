@@ -105,7 +105,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 
 | ID | What it finds | Severity range |
 |----|---------------|----------------|
-| SMK-001 | SageMaker models or training jobs with no `vpc_config`, Studio domains defaulting to public network access for app traffic, or notebook instances defaulting to direct internet access or root access | HIGH to LOW |
+| SMK-001 | SageMaker models or training jobs with no `vpc_config`, distributed training jobs leaving inter-instance traffic unencrypted, Studio domains defaulting to public network access for app traffic, or notebook instances defaulting to direct internet access or root access | HIGH to LOW |
 | IAM-001 | Wildcard AI grants (`bedrock:*`, `sagemaker:*` on `Resource "*"`) in inline policies, customer managed policies, policy documents, or attached AWS `FullAccess` policies | HIGH |
 | S3-001 | AI-related buckets exposed by a public ACL or a `Principal "*"` policy, plus weakened or missing public access blocks. A bucket backing a Bedrock Knowledge Base counts even with a name that gives no keyword hint | CRITICAL to LOW |
 | VPC-001 | Lambda functions or ECS Fargate tasks calling Bedrock or SageMaker with no matching interface VPC endpoint in the project | MEDIUM to LOW |

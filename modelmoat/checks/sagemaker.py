@@ -19,6 +19,19 @@ Four distinct resources, one theme:
                           model or a domain, so the message says so rather
                           than reusing the "still requires IAM auth" framing
                           that does not apply to this resource.
+                          A second, independent finding on this same
+                          resource: enable_inter_container_traffic_encryption
+                          (default false) protects model weights and
+                          gradients moving between compute instances during
+                          distributed training, not the raw dataset, and it
+                          is meaningless below two instances - AWS's own
+                          docs say it "doesn't affect training jobs with a
+                          single compute instance" - so it is only checked
+                          once instance_count is provably greater than one.
+                          MEDIUM rather than HIGH: this traffic stays inside
+                          the job's own network, so observing it needs a
+                          foothold there, unlike the internet-facing shape
+                          of this check's other HIGH findings.
   aws_sagemaker_domain   vpc_id and subnet_ids are required, so a Studio
                           domain always sits in a VPC for EFS traffic. But
                           app_network_access_type (default
@@ -66,7 +79,7 @@ message does not borrow that framing.
 
 from __future__ import annotations
 
-from ..graph import ProjectGraph, Resource, blocks, is_unknown
+from ..graph import ProjectGraph, Resource, blocks, first_block, is_unknown, missing_or_false
 from ..scanner import Finding
 
 _MODEL_DOCS_URL = "https://docs.aws.amazon.com/sagemaker/latest/dg/host-vpc.html"
@@ -77,6 +90,9 @@ _DOMAIN_DOCS_URL = (
 _NOTEBOOK_DOCS_URL = (
     "https://docs.aws.amazon.com/sagemaker/latest/dg/"
     "appendix-notebook-and-internet-access.html"
+)
+_TRAINING_ENCRYPTION_DOCS_URL = (
+    "https://docs.aws.amazon.com/sagemaker/latest/dg/train-encrypt.html"
 )
 
 
@@ -104,6 +120,29 @@ def _is_enabled(value) -> bool:
     if not isinstance(value, str) or is_unknown(value):
         return False
     return value.strip() == "Enabled"
+
+
+def _instance_count(resource_config: dict | None) -> int | None:
+    """Resolve resource_config.instance_count to an int, or None when it
+    cannot be proven - missing block, missing field, or a variable-driven
+    value. enable_inter_container_traffic_encryption "doesn't affect
+    training jobs with a single compute instance" per AWS's own docs, so a
+    caller must know this is genuinely greater than one before treating the
+    setting as meaningful.
+    """
+    if resource_config is None:
+        return None
+    value = resource_config.get("instance_count")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and not is_unknown(value):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
 
 
 class SageMakerNetworkCheck:
@@ -208,34 +247,76 @@ class SageMakerNetworkCheck:
         findings: list[Finding] = []
 
         for job in graph.by_type("aws_sagemaker_training_job"):
-            if blocks(job.config, "vpc_config"):
-                continue
-
-            findings.append(
-                self._finding(
-                    job,
-                    "HIGH",
-                    (
-                        f"SageMaker training job '{job.name}' has no vpc_config. "
-                        "Its training containers run on the SageMaker managed "
-                        "network with direct internet egress, and data channel "
-                        "and inter-container traffic bypasses your VPC. The "
-                        "training data and any credentials the job assumes are "
-                        "exposed to that traffic path, not to an open URL - "
-                        "there is no invocation endpoint here at all."
-                    ),
-                    (
-                        "Add vpc_config with subnets and security_group_ids to "
-                        f"aws_sagemaker_training_job.{job.name}. For jobs that "
-                        "should never reach the internet, also set "
-                        "enable_network_isolation = true and provide VPC "
-                        "endpoints for S3 and ECR so the job can still pull "
-                        "training data and images."
-                    ),
-                    _MODEL_DOCS_URL,
-                    detail="",
+            if not blocks(job.config, "vpc_config"):
+                findings.append(
+                    self._finding(
+                        job,
+                        "HIGH",
+                        (
+                            f"SageMaker training job '{job.name}' has no "
+                            "vpc_config. Its training containers run on the "
+                            "SageMaker managed network with direct internet "
+                            "egress, and data channel and inter-container "
+                            "traffic bypasses your VPC. The training data and "
+                            "any credentials the job assumes are exposed to "
+                            "that traffic path, not to an open URL - there is "
+                            "no invocation endpoint here at all."
+                        ),
+                        (
+                            "Add vpc_config with subnets and security_group_ids "
+                            f"to aws_sagemaker_training_job.{job.name}. For jobs "
+                            "that should never reach the internet, also set "
+                            "enable_network_isolation = true and provide VPC "
+                            "endpoints for S3 and ECR so the job can still pull "
+                            "training data and images."
+                        ),
+                        _MODEL_DOCS_URL,
+                        detail="",
+                    )
                 )
-            )
+
+            # enable_inter_container_traffic_encryption is independent of
+            # vpc_config - a job can be fully VPC-attached and still leave
+            # inter-node weight/gradient traffic unencrypted - and it is
+            # meaningless below two instances, so it is only evaluated once
+            # instance_count is provably greater than one.
+            instance_count = _instance_count(first_block(job.config, "resource_config"))
+            if instance_count is not None and instance_count > 1:
+                encryption = job.config.get("enable_inter_container_traffic_encryption")
+                if missing_or_false(encryption):
+                    state = (
+                        "has no enable_inter_container_traffic_encryption set, "
+                        "which defaults to false"
+                        if encryption is None
+                        else "sets enable_inter_container_traffic_encryption = false"
+                    )
+                    findings.append(
+                        self._finding(
+                            job,
+                            "MEDIUM",
+                            (
+                                f"SageMaker training job '{job.name}' runs "
+                                f"{instance_count} compute instances and {state}. "
+                                "Distributed training transmits model weights "
+                                "and gradients - not the raw training dataset - "
+                                "between those instances unencrypted. This "
+                                "traffic stays within the job's own network "
+                                "rather than the internet, so observing it "
+                                "requires a foothold on that network, but AWS's "
+                                "own guidance recommends this control "
+                                "specifically for regulated workloads."
+                            ),
+                            (
+                                "Set enable_inter_container_traffic_encryption = "
+                                "true on "
+                                f"aws_sagemaker_training_job.{job.name}. This can "
+                                "increase training time for communication-heavy "
+                                "distributed algorithms."
+                            ),
+                            _TRAINING_ENCRYPTION_DOCS_URL,
+                            detail="enable_inter_container_traffic_encryption",
+                        )
+                    )
 
         return findings
 
