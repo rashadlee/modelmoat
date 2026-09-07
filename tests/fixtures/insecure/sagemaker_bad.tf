@@ -24,6 +24,25 @@ resource "aws_sagemaker_domain" "explicit_public" {
     execution_role = aws_iam_role.sm_exec.arn
   }
 }
+resource "aws_sagemaker_training_job" "exposed_training" {
+  training_job_name = "exposed-training-job"
+  role_arn           = aws_iam_role.sm_exec.arn
+  algorithm_specification {
+    training_image     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/train:latest"
+    training_input_mode = "File"
+  }
+  resource_config {
+    instance_count    = 1
+    instance_type     = "ml.g5.xlarge"
+    volume_size_in_gb = 50
+  }
+  output_data_config {
+    s3_output_path = "s3://acme-training-output/exposed"
+  }
+  stopping_condition {
+    max_runtime_in_seconds = 3600
+  }
+}
 resource "aws_sagemaker_notebook_instance" "exposed_notebook" {
   name          = "exposed-notebook"
   role_arn      = aws_iam_role.sm_exec.arn

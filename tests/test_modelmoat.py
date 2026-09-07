@@ -701,6 +701,52 @@ def test_model_finding_detail_is_unchanged_by_domain_addition():
 
 
 # --------------------------------------------------------------------- #
+# SMK-001: SageMaker training job network isolation                     #
+# --------------------------------------------------------------------- #
+def test_training_job_missing_vpc_config_is_high():
+    result = scan(INSECURE)
+    hits = [
+        f
+        for f in result.findings
+        if f.check_id == "SMK-001" and f.resource_name == "exposed_training"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+    assert hits[0].detail == ""
+
+
+def test_training_job_with_vpc_config_stays_silent():
+    # "hardened" is reused as a resource name across the notebook and
+    # training job fixtures, so check by resource_type rather than name to
+    # avoid a false pass if either one regresses independently.
+    training_hits = [
+        f
+        for f in scan(SECURE).findings
+        if f.resource_type == "aws_sagemaker_training_job"
+    ]
+    assert training_hits == []
+
+
+def test_training_job_finding_detail_does_not_collide_with_model():
+    # detail feeds the fingerprint. Both findings reuse detail="" by design
+    # (mirroring the exact same check), so resource_type must be what keeps
+    # their fingerprints apart - this test fails if that assumption breaks.
+    result = scan(INSECURE)
+    model_hit = next(
+        f
+        for f in result.findings
+        if f.check_id == "SMK-001" and f.resource_name == "exposed_llm"
+    )
+    training_hit = next(
+        f
+        for f in result.findings
+        if f.check_id == "SMK-001" and f.resource_name == "exposed_training"
+    )
+    assert model_hit.detail == training_hit.detail == ""
+    assert model_hit.fingerprint != training_hit.fingerprint
+
+
+# --------------------------------------------------------------------- #
 # SMK-001: SageMaker notebook instance direct internet access and root  #
 # --------------------------------------------------------------------- #
 def test_notebook_missing_direct_internet_access_is_high():
@@ -761,10 +807,11 @@ def test_notebook_findings_have_distinct_details_from_model_and_domain():
     # domain's "app_network_access_type" detail.
     result = scan(INSECURE)
     smk_hits = [f for f in result.findings if f.check_id == "SMK-001"]
-    # model (1) + domain unset_access_type (1) + domain explicit_public (1)
+    # model (1) + training job (1) + domain unset_access_type (1)
+    # + domain explicit_public (1)
     # + notebook exposed_notebook (2: direct_internet_access, root_access)
     # + notebook explicit_open_notebook (1: direct_internet_access only)
-    assert len(smk_hits) == 6
+    assert len(smk_hits) == 7
     assert len({f.fingerprint for f in smk_hits}) == len(smk_hits)
 
 

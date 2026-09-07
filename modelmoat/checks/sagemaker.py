@@ -1,6 +1,6 @@
 """SMK-001: SageMaker networking - traffic paths that bypass the VPC.
 
-Three distinct resources, one theme:
+Four distinct resources, one theme:
 
   aws_sagemaker_model    vpc_config lives here, not on
                           aws_sagemaker_endpoint_configuration. A model
@@ -9,6 +9,16 @@ Three distinct resources, one theme:
                           egress, and inference traffic between your
                           applications and the endpoint never touches your
                           private network.
+  aws_sagemaker_training_job
+                          Same vpc_config shape and the same "has no
+                          vpc_config" check as the model above - training
+                          data channels and inter-container traffic run on
+                          the SageMaker managed network instead of the VPC
+                          when it is absent. There is no invocation endpoint
+                          to authenticate against here at all, unlike a
+                          model or a domain, so the message says so rather
+                          than reusing the "still requires IAM auth" framing
+                          that does not apply to this resource.
   aws_sagemaker_domain   vpc_id and subnet_ids are required, so a Studio
                           domain always sits in a VPC for EFS traffic. But
                           app_network_access_type (default
@@ -44,11 +54,14 @@ Three distinct resources, one theme:
                           path, so it does not share the network finding's
                           severity.
 
-In all three cases invoking or reaching the resource still requires an
-authenticated request (SigV4-signed IAM for a model endpoint, IAM/SSO for
-Studio, a presigned URL for a notebook instance), so these are exposures of
-the runtime traffic path or blast radius, not open URLs, and the findings
-say so.
+In the model, domain, and notebook cases, invoking or reaching the resource
+still requires an authenticated request (SigV4-signed IAM for a model
+endpoint, IAM/SSO for Studio, a presigned URL for a notebook instance), so
+those are exposures of the runtime traffic path or blast radius, not open
+URLs, and the findings say so. A training job has no invocation endpoint at
+all to authenticate against - its exposure is the training data and
+inter-container traffic on the wire, not a reachable interface - so its
+message does not borrow that framing.
 """
 
 from __future__ import annotations
@@ -102,6 +115,7 @@ class SageMakerNetworkCheck:
         findings.extend(self._models(graph))
         findings.extend(self._domains(graph))
         findings.extend(self._notebook_instances(graph))
+        findings.extend(self._training_jobs(graph))
         return findings
 
     # ------------------------------------------------------------------ #
@@ -182,6 +196,44 @@ class SageMakerNetworkCheck:
                     ),
                     _DOMAIN_DOCS_URL,
                     detail="app_network_access_type",
+                )
+            )
+
+        return findings
+
+    # ------------------------------------------------------------------ #
+    # aws_sagemaker_training_job                                          #
+    # ------------------------------------------------------------------ #
+    def _training_jobs(self, graph: ProjectGraph) -> list[Finding]:
+        findings: list[Finding] = []
+
+        for job in graph.by_type("aws_sagemaker_training_job"):
+            if blocks(job.config, "vpc_config"):
+                continue
+
+            findings.append(
+                self._finding(
+                    job,
+                    "HIGH",
+                    (
+                        f"SageMaker training job '{job.name}' has no vpc_config. "
+                        "Its training containers run on the SageMaker managed "
+                        "network with direct internet egress, and data channel "
+                        "and inter-container traffic bypasses your VPC. The "
+                        "training data and any credentials the job assumes are "
+                        "exposed to that traffic path, not to an open URL - "
+                        "there is no invocation endpoint here at all."
+                    ),
+                    (
+                        "Add vpc_config with subnets and security_group_ids to "
+                        f"aws_sagemaker_training_job.{job.name}. For jobs that "
+                        "should never reach the internet, also set "
+                        "enable_network_isolation = true and provide VPC "
+                        "endpoints for S3 and ECR so the job can still pull "
+                        "training data and images."
+                    ),
+                    _MODEL_DOCS_URL,
+                    detail="",
                 )
             )
 
