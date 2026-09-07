@@ -6,6 +6,7 @@ from .bedrock_agentcore import BedrockAgentCoreGatewayCheck
 from .datastores import VectorDataStoreCheck
 from .ecs_vectorstore import ECSVectorStoreReachabilityCheck
 from .iam import AIServiceIAMCheck
+from .model_registry import ModelPackageGroupPolicyCheck
 from .network import AIVPCEndpointCheck
 from .pinecone import PineconeOrgRoleCheck
 from .s3 import ModelArtifactBucketCheck
@@ -26,4 +27,5 @@ ALL_CHECKS = [
     BedrockAgentCoreGatewayCheck(),
     VertexAIReasoningEngineCheck(),
     APIGatewayAIProxyAuthCheck(),
+    ModelPackageGroupPolicyCheck(),
 ]

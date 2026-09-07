@@ -34,6 +34,7 @@ from modelmoat.checks import ALL_CHECKS
 from modelmoat.cli import app
 from modelmoat.graph import _read_terraform_file, ai_tokens_in, build_graph, unquote
 from modelmoat.policy import (
+    allows_public_principal,
     parse_policy_document,
     risky_managed_policy,
     wildcard_ai_grants,
@@ -768,6 +769,47 @@ def test_notebook_findings_have_distinct_details_from_model_and_domain():
 
 
 # --------------------------------------------------------------------- #
+# SMK-002: SageMaker Model Package Group public sharing                 #
+# --------------------------------------------------------------------- #
+def test_model_package_group_inline_public_policy_is_high():
+    result = scan(INSECURE)
+    hits = [
+        f
+        for f in result.findings
+        if f.check_id == "SMK-002" and f.resource_name == "public_registry"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+    assert hits[0].detail == "public_resource_policy"
+
+
+def test_model_package_group_data_source_public_policy_is_high():
+    result = scan(INSECURE)
+    hits = [
+        f
+        for f in result.findings
+        if f.check_id == "SMK-002" and f.resource_name == "public_via_data_source"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+
+
+def test_model_package_group_scoped_account_policy_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "scoped" not in named
+
+
+def test_model_package_group_no_policy_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "private" not in named
+
+
+def test_model_package_group_variable_driven_policy_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "from_variable" not in named
+
+
+# --------------------------------------------------------------------- #
 # PIN-001 and VEC-002: vector stores outside AWS                        #
 # --------------------------------------------------------------------- #
 def test_pinecone_org_owner_on_machine_principal_is_high():
@@ -1484,6 +1526,34 @@ def test_parse_policy_document_handles_hcl2_jsonencode_serialization():
     doc = parse_policy_document(raw)
     assert doc is not None
     assert wildcard_ai_grants(doc) == ["bedrock:*"]
+
+
+def test_parse_policy_document_resolves_principal_past_a_bare_reference_value():
+    # Found while building SMK-002: Resource = [aws_x.name.arn] (no quotes,
+    # the idiomatic HCL form for a resource-level action with nothing to
+    # append) used to fail the whole document's parse, hiding a fully static
+    # Principal "*" sitting right next to an unresolvable ARN reference.
+    raw = (
+        '${jsonencode({Version = "2012-10-17", Statement = '
+        '[{Effect = "Allow", Principal = "*", Action = ["sagemaker:DescribeModelPackage"], '
+        "Resource = [aws_sagemaker_model_package_group.example.arn]}]})}"
+    )
+    doc = parse_policy_document(raw)
+    assert doc is not None
+    assert allows_public_principal(doc)
+
+
+def test_parse_policy_document_still_fails_on_a_genuine_function_call():
+    # The placeholder substitution targets bare dotted references
+    # specifically. A value built from a function call is still not
+    # something modelmoat evaluates - it must keep falling through to None
+    # rather than guessing.
+    raw = (
+        '${jsonencode({Version = "2012-10-17", Statement = '
+        '[{Effect = "Allow", Principal = "*", Action = ["s3:GetObject"], '
+        'Resource = [format("%s/*", aws_s3_bucket.example.arn)]}]})}'
+    )
+    assert parse_policy_document(raw) is None
 
 
 def test_risky_managed_policy_matching_is_case_insensitive():

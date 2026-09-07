@@ -43,6 +43,41 @@ RISKY_MANAGED_POLICIES = (
 
 _HCL_KEY = re.compile(r'("[^"\n=]+"|\b[A-Za-z_][A-Za-z0-9_]*\b)\s*=(?!=)')
 
+# Matches either a quoted JSON string (left untouched, group 1 is None) or a
+# bare, unquoted dotted reference like aws_s3_bucket.x.arn - the value form
+# of a resource attribute reference used directly inside a jsonencode() HCL
+# object, as opposed to string interpolation like "${aws_s3_bucket.x.arn}/*"
+# (already a quoted JSON string once the outer ${...} unwraps, and handled
+# fine without this). A true JSON value is never a bare dotted word, so
+# matching this pattern outside of quotes is unambiguous.
+_UNRESOLVED_VALUE_REF = re.compile(
+    r'"(?:[^"\\]|\\.)*"'
+    r"|\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_*-]+)+)\b"
+)
+_UNRESOLVED_PLACEHOLDER = "__modelmoat_unresolved_reference__"
+
+
+def _replace_unresolved_value_references(text: str) -> str:
+    """Replace bare resource-attribute references used as values with an
+    opaque placeholder string, so the rest of the document still parses.
+
+    Without this, a policy statement's Resource field referencing its own
+    resource's ARN directly (Resource = [aws_s3_bucket.x.arn], the idiomatic
+    form for a resource-level action with nothing to append) failed the
+    entire document's parse - even though a field like Principal sitting
+    right next to it is fully static and provable regardless of what that
+    ARN resolves to. The placeholder can never equal "*" or any other value
+    a check compares against, so this can only surface a previously-missed
+    finding; it cannot manufacture a new one.
+    """
+
+    def replace(match: re.Match) -> str:
+        if match.group(1) is None:
+            return match.group(0)  # already a quoted JSON string, untouched
+        return f'"{_UNRESOLVED_PLACEHOLDER}"'
+
+    return _UNRESOLVED_VALUE_REF.sub(replace, text)
+
 # The account-id segment of an AWS-owned managed policy's ARN is always the
 # literal string "aws", never a real account number - that's what actually
 # distinguishes it from a customer-managed policy, not the policy's name. A
@@ -87,9 +122,15 @@ def parse_json_value(value, expected_type: type):
     JSON heredoc, or an HCL object/array literal: the whole value wrapped in
     ${...} (every function call gets this treatment, not just ones with real
     unknowns), then jsonencode(...) itself, then either valid JSON or HCL
-    syntax using = instead of :. A value that still contains an unresolved
-    reference after unwrapping fails both parse attempts and correctly falls
-    through to None - modelmoat does not flag what it cannot prove.
+    syntax using = instead of :. A bare resource-attribute reference used as
+    a value (Resource = [aws_s3_bucket.x.arn], the idiomatic form when a
+    resource-level action needs nothing appended to the ARN) is replaced with
+    an opaque placeholder rather than failing the whole document - one
+    unresolvable field must not also hide every other field in the same
+    statement, including ones as load-bearing as Principal. A value that
+    still cannot be resolved after that (a function call composed from other
+    expressions, for example) still correctly falls through to None -
+    modelmoat does not flag what it cannot prove.
     """
     if isinstance(value, expected_type):
         return value
@@ -109,7 +150,8 @@ def parse_json_value(value, expected_type: type):
         pass
 
     try:
-        parsed = json.loads(_hcl_object_to_json(text))
+        hcl_json = _replace_unresolved_value_references(_hcl_object_to_json(text))
+        parsed = json.loads(hcl_json)
         return parsed if isinstance(parsed, expected_type) else None
     except (json.JSONDecodeError, ValueError):
         return None

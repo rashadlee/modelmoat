@@ -117,6 +117,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | BRK-001 | Bedrock AgentCore gateways with `authorizer_type = "NONE"`, so any caller can invoke every tool the gateway exposes | CRITICAL |
 | GCP-001 | Vertex AI Reasoning Engines with no Private Service Connect network attachment or no CMEK `encryption_spec` | HIGH |
 | AGW-001 | API Gateway REST methods with no authorization, proxying directly to a Bedrock or SageMaker runtime invocation | CRITICAL |
+| SMK-002 | SageMaker Model Package Group resource policies granting `Principal "*"`, removing the account-scoping cross-account model sharing is supposed to have | HIGH |
 
 -----
 
