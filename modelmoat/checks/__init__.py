@@ -14,6 +14,7 @@ from .databricks_cluster import DatabricksClusterIsolationCheck
 from .datastores import VectorDataStoreCheck
 from .ecs_vectorstore import ECSVectorStoreReachabilityCheck
 from .iam import AIServiceIAMCheck
+from .lambda_function_url import LambdaFunctionURLPublicAIAccessCheck
 from .model_registry import ModelPackageGroupPolicyCheck
 from .network import AIVPCEndpointCheck
 from .pinecone import PineconeOrgRoleCheck
@@ -44,4 +45,5 @@ ALL_CHECKS = [
     AzureDatabricksNetworkCheck(),
     ComprehendTrainingNetworkCheck(),
     DatabricksClusterIsolationCheck(),
+    LambdaFunctionURLPublicAIAccessCheck(),
 ]

@@ -1315,6 +1315,46 @@ def test_cluster_variable_driven_stays_silent():
     assert "variable_cluster" not in named
 
 
+# --------------------------------------------------------------------- #
+# LFU-001: Lambda Function URL with no auth calling an AI service       #
+# --------------------------------------------------------------------- #
+def test_public_function_url_calling_bedrock_is_critical():
+    # agent_role (shared with other insecure fixtures) grants both
+    # bedrock:* and sagemaker:*, so both signals correctly fire here - the
+    # role really does grant both, and _role_signals is shared correlation
+    # machinery reused from VPC-001, not duplicated per check.
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "LFU-001" and f.resource_name == "public_url_agent"
+    ]
+    assert {f.detail for f in hits} == {"bedrock", "sagemaker"}
+    assert all(f.severity == "CRITICAL" for f in hits)
+    assert len({f.fingerprint for f in hits}) == len(hits)
+
+
+def test_iam_authed_function_url_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "iam_authed_agent" not in named
+
+
+def test_none_auth_with_no_permission_stays_silent():
+    # authorization_type = "NONE" alone does not prove public reachability -
+    # AWS's own docs require a separate resource-based policy too.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "none_auth_no_permission" not in named
+
+
+def test_public_function_url_with_no_ai_signal_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "public_no_ai_signal" not in named
+
+
+def test_function_url_variable_driven_auth_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "variable_auth_agent" not in named
+
+
 def test_truthy_or_absent_treats_boolean_false_as_false():
     # Regression: an earlier version fell through every branch for a
     # literal Python False and returned True, which meant an explicitly
