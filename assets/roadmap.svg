@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="128" viewBox="0 0 1000 128" fill="none" role="img" aria-label="modelmoat roadmap, coming next: a GitHub App for native pull request comments.">
-  <rect width="1000" height="128" rx="20" fill="#292929"></rect>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="164" viewBox="0 0 1000 164" fill="none" role="img" aria-label="modelmoat roadmap, coming next: a GitHub App for native pull request comments (live, not yet public); and continued AI service coverage as AWS, Azure, and GCP ship new features.">
+  <rect width="1000" height="164" rx="20" fill="#292929"></rect>
   <g font-family="'Geist Mono','SFMono-Regular',Menlo,Consolas,monospace">
 
     <text x="60" y="56" font-size="12" letter-spacing="1.6" fill="#608ab1">COMING NEXT</text>
@@ -7,7 +7,10 @@
 
     <g font-size="16" fill="#c5c8c6">
       <rect x="60" y="84" width="9" height="9" fill="#608ab1"></rect>
-      <text x="80" y="93">A GitHub App for native pull request comments</text>
+      <text x="80" y="93">A GitHub App for native pull request comments (live, not yet public)</text>
+
+      <rect x="60" y="120" width="9" height="9" fill="#608ab1"></rect>
+      <text x="80" y="129">Continued AI service coverage as AWS, Azure, and GCP ship new features</text>
     </g>
   </g>
 </svg>

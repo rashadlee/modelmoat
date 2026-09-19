@@ -290,7 +290,11 @@ to look, not verdicts.
 ![modelmoat roadmap: coming next](https://raw.githubusercontent.com/rashadlee/modelmoat/master/assets/roadmap.svg)
 
 A GitHub App for native pull request comments, as an alternative to wiring up
-the `--sarif` upload step by hand.
+the `--sarif` upload step by hand. It is live and running today, just not yet
+available outside this repository.
+
+Continued coverage for new AI services and resources as AWS, Azure, and GCP
+ship them, on the same pace as the checks table above.
 
 Pinecone and Weaviate were on this list as "providers" and shipped as something
 else, because that framing did not survive contact with the registry. There is
