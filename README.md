@@ -124,6 +124,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | SMK-002 | SageMaker Model Package Group resource policies granting `Principal "*"`, removing the account-scoping cross-account model sharing is supposed to have | HIGH |
 | ASR-001 | Azure AI Search services reachable from the public internet or allowing local (API key) authentication instead of Microsoft Entra ID only | MEDIUM |
 | DBX-001 | Azure Databricks workspaces reachable from the public internet by default | MEDIUM |
+| CMP-001 | Comprehend custom entity recognizer or document classifier training jobs with no `vpc_config` | HIGH |
 
 -----
 

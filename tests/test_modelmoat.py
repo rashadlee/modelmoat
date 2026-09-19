@@ -1240,6 +1240,39 @@ def test_databricks_workspace_variable_driven_stays_silent():
     assert "variable_workspace" not in named
 
 
+# --------------------------------------------------------------------- #
+# CMP-001: Comprehend training job network exposure                     #
+# --------------------------------------------------------------------- #
+def test_entity_recognizer_no_vpc_config_is_high():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "CMP-001" and f.resource_name == "exposed_recognizer"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+
+
+def test_document_classifier_no_vpc_config_is_high():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "CMP-001" and f.resource_name == "exposed_classifier"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+
+
+def test_entity_recognizer_with_vpc_config_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "private_recognizer" not in named
+
+
+def test_document_classifier_with_vpc_config_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "private_classifier" not in named
+
+
 def test_truthy_or_absent_treats_boolean_false_as_false():
     # Regression: an earlier version fell through every branch for a
     # literal Python False and returned True, which meant an explicitly
