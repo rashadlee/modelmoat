@@ -126,6 +126,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | ASR-001 | Azure AI Search services reachable from the public internet or allowing local (API key) authentication instead of Microsoft Entra ID only | MEDIUM |
 | DBX-001 | Azure Databricks workspaces reachable from the public internet by default | MEDIUM |
 | CMP-001 | Comprehend custom entity recognizer or document classifier training jobs with no `vpc_config` | HIGH |
+| DBX-002 | Databricks clusters with `data_security_mode` explicitly set to `"NONE"` or `"NO_ISOLATION"`, sharing credentials between attached users | HIGH |
 
 -----
 

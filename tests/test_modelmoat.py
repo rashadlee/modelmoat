@@ -1273,6 +1273,48 @@ def test_document_classifier_with_vpc_config_stays_silent():
     assert "private_classifier" not in named
 
 
+# --------------------------------------------------------------------- #
+# DBX-002: Databricks cluster user isolation                            #
+# --------------------------------------------------------------------- #
+def test_cluster_explicit_none_is_high():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "DBX-002" and f.resource_name == "shared_no_isolation"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+    assert hits[0].detail == "data_security_mode"
+
+
+def test_cluster_legacy_no_isolation_alias_is_high():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "DBX-002" and f.resource_name == "legacy_no_isolation"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+
+
+def test_cluster_user_isolation_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "isolated_cluster" not in named
+
+
+def test_cluster_omitted_data_security_mode_stays_silent():
+    # Databricks's own docs state omission enables default security
+    # features - the safe state is the default here, unlike almost every
+    # other check in this project.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "default_cluster" not in named
+
+
+def test_cluster_variable_driven_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "variable_cluster" not in named
+
+
 def test_truthy_or_absent_treats_boolean_false_as_false():
     # Regression: an earlier version fell through every branch for a
     # literal Python False and returned True, which meant an explicitly
