@@ -14,3 +14,13 @@ resource "azurerm_machine_learning_compute_instance" "exposed_notebook" {
   machine_learning_workspace_id = azurerm_machine_learning_workspace.exposed_workspace.id
   virtual_machine_size          = "STANDARD_DS2_V2"
 }
+resource "azurerm_ai_foundry" "exposed_hub" {
+  name                = "exposed-ai-foundry-hub"
+  location            = "eastus"
+  resource_group_name = "ai-rg"
+  storage_account_id  = azurerm_storage_account.ml.id
+  key_vault_id        = azurerm_key_vault.ml.id
+  identity {
+    type = "SystemAssigned"
+  }
+}

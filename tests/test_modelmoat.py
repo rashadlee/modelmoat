@@ -1152,6 +1152,27 @@ def test_ml_compute_instance_variable_driven_stays_silent():
     assert "variable_notebook" not in named
 
 
+def test_ai_foundry_hub_public_by_default_is_medium():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "AML-001" and f.resource_name == "exposed_hub"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "MEDIUM"
+    assert hits[0].detail == "ai_foundry_public_network_access"
+
+
+def test_ai_foundry_hub_private_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "private_hub" not in named
+
+
+def test_ai_foundry_hub_variable_driven_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "variable_hub" not in named
+
+
 def test_truthy_or_absent_treats_boolean_false_as_false():
     # Regression: an earlier version fell through every branch for a
     # literal Python False and returned True, which meant an explicitly

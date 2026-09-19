@@ -38,3 +38,27 @@ resource "azurerm_machine_learning_compute_instance" "variable_notebook" {
   virtual_machine_size           = "STANDARD_DS2_V2"
   node_public_ip_enabled         = var.node_public_ip_enabled
 }
+resource "azurerm_ai_foundry" "private_hub" {
+  name                  = "prod-ai-foundry-hub"
+  location              = "eastus"
+  resource_group_name   = "ai-rg"
+  storage_account_id    = azurerm_storage_account.ml.id
+  key_vault_id          = azurerm_key_vault.ml.id
+  public_network_access = "Disabled"
+  identity {
+    type = "SystemAssigned"
+  }
+}
+# public_network_access from a variable is unprovable, so it must not be
+# flagged - the same rule every other check follows for interpolated values.
+resource "azurerm_ai_foundry" "variable_hub" {
+  name                  = "variable-ai-foundry-hub"
+  location              = "eastus"
+  resource_group_name   = "ai-rg"
+  storage_account_id    = azurerm_storage_account.ml.id
+  key_vault_id          = azurerm_key_vault.ml.id
+  public_network_access = var.public_network_access
+  identity {
+    type = "SystemAssigned"
+  }
+}
