@@ -1173,6 +1173,49 @@ def test_ai_foundry_hub_variable_driven_stays_silent():
     assert "variable_hub" not in named
 
 
+# --------------------------------------------------------------------- #
+# ASR-001: Azure AI Search network exposure and local authentication    #
+# --------------------------------------------------------------------- #
+def test_search_service_public_and_local_auth_by_default_reports_two_findings():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "ASR-001" and f.resource_name == "exposed_search"
+    ]
+    assert len(hits) == 2
+    assert {f.detail for f in hits} == {"public_network_access", "local_authentication"}
+    assert all(f.severity == "MEDIUM" for f in hits)
+
+
+def test_search_service_findings_have_distinct_fingerprints():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "ASR-001" and f.resource_name == "exposed_search"
+    ]
+    assert len({f.fingerprint for f in hits}) == len(hits)
+
+
+def test_search_service_local_auth_isolated_from_network_finding():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "ASR-001" and f.resource_name == "local_auth_search"
+    ]
+    assert len(hits) == 1
+    assert hits[0].detail == "local_authentication"
+
+
+def test_search_service_private_and_entra_only_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "private_search" not in named
+
+
+def test_search_service_variable_driven_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "variable_search" not in named
+
+
 def test_truthy_or_absent_treats_boolean_false_as_false():
     # Regression: an earlier version fell through every branch for a
     # literal Python False and returned True, which meant an explicitly

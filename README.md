@@ -122,6 +122,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | AGW-001 | API Gateway REST methods with no authorization, proxying directly to a Bedrock or SageMaker runtime invocation | CRITICAL |
 | AGW-002 | API Gateway REST APIs with an AI-backed method and a resource policy allowing `Principal "*"`, which overrides individually-authenticated methods | CRITICAL |
 | SMK-002 | SageMaker Model Package Group resource policies granting `Principal "*"`, removing the account-scoping cross-account model sharing is supposed to have | HIGH |
+| ASR-001 | Azure AI Search services reachable from the public internet or allowing local (API key) authentication instead of Microsoft Entra ID only | MEDIUM |
 
 -----
 
