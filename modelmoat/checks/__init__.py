@@ -2,6 +2,7 @@
 
 from .apigateway import APIGatewayAIProxyAuthCheck
 from .apigateway_policy import APIGatewayPublicResourcePolicyCheck
+from .azure_machine_learning import AzureMachineLearningNetworkCheck
 from .azure_openai import AzureOpenAINetworkCheck
 from .azure_openai_auth import AzureOpenAILocalAuthCheck
 from .bedrock_agentcore import BedrockAgentCoreGatewayCheck
@@ -34,4 +35,5 @@ ALL_CHECKS = [
     AzureOpenAILocalAuthCheck(),
     BedrockAgentCoreDebugExceptionsCheck(),
     APIGatewayPublicResourcePolicyCheck(),
+    AzureMachineLearningNetworkCheck(),
 ]

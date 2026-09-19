@@ -115,6 +115,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | PIN-001 | Pinecone `OrgOwner` granted at organization scope to a service account or API key | HIGH |
 | AZR-001 | Azure OpenAI / AI Services accounts reachable from the public internet, via `public_network_access_enabled` or a missing `network_acls` deny rule | HIGH |
 | AZR-002 | Azure OpenAI / AI Services accounts allowing local (API key) authentication instead of Microsoft Entra ID only | MEDIUM |
+| AML-001 | Azure Machine Learning workspaces or compute instances reachable from the public internet by default | MEDIUM |
 | BRK-001 | Bedrock AgentCore gateways with `authorizer_type = "NONE"`, so any caller can invoke every tool the gateway exposes | CRITICAL |
 | BRK-002 | Bedrock AgentCore gateways with `exception_level = "DEBUG"`, leaking internal error detail to callers | MEDIUM |
 | GCP-001 | Vertex AI Reasoning Engines or Endpoints with no Private Service Connect network attachment, Reasoning Engines with no CMEK `encryption_spec`, or Workbench notebooks defaulting to a public IP or root access | HIGH to LOW |
