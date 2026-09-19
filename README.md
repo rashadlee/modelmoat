@@ -114,6 +114,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | VEC-003 | Self-hosted vector databases (Qdrant, Weaviate, Milvus) publicly reachable on ECS Fargate | HIGH |
 | PIN-001 | Pinecone `OrgOwner` granted at organization scope to a service account or API key | HIGH |
 | AZR-001 | Azure OpenAI / AI Services accounts reachable from the public internet, via `public_network_access_enabled` or a missing `network_acls` deny rule | HIGH |
+| AZR-002 | Azure OpenAI / AI Services accounts allowing local (API key) authentication instead of Microsoft Entra ID only | MEDIUM |
 | BRK-001 | Bedrock AgentCore gateways with `authorizer_type = "NONE"`, so any caller can invoke every tool the gateway exposes | CRITICAL |
 | GCP-001 | Vertex AI Reasoning Engines with no Private Service Connect network attachment or no CMEK `encryption_spec` | HIGH |
 | AGW-001 | API Gateway REST methods with no authorization, proxying directly to a Bedrock or SageMaker runtime invocation | CRITICAL |

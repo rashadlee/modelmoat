@@ -2,6 +2,7 @@
 
 from .apigateway import APIGatewayAIProxyAuthCheck
 from .azure_openai import AzureOpenAINetworkCheck
+from .azure_openai_auth import AzureOpenAILocalAuthCheck
 from .bedrock_agentcore import BedrockAgentCoreGatewayCheck
 from .datastores import VectorDataStoreCheck
 from .ecs_vectorstore import ECSVectorStoreReachabilityCheck
@@ -28,4 +29,5 @@ ALL_CHECKS = [
     VertexAIReasoningEngineCheck(),
     APIGatewayAIProxyAuthCheck(),
     ModelPackageGroupPolicyCheck(),
+    AzureOpenAILocalAuthCheck(),
 ]

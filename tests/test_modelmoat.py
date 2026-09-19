@@ -1015,6 +1015,52 @@ def test_azure_openai_non_ai_kind_stays_silent():
     assert "vision" not in named
 
 
+# --------------------------------------------------------------------- #
+# AZR-002: Azure OpenAI local (API key) authentication enabled          #
+# --------------------------------------------------------------------- #
+def test_azure_openai_local_auth_default_is_medium():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "AZR-002" and f.resource_name == "exposed_openai"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "MEDIUM"
+    assert hits[0].detail == "local_auth_enabled"
+
+
+def test_azure_openai_local_auth_explicit_true_is_medium_independent_of_network():
+    # public_network_access_enabled = false here, so this isolates the
+    # local-auth finding - proves the two checks are independent, the same
+    # shape as SMK-001's explicit_open_notebook case.
+    result = scan(INSECURE)
+    azr_hits = [f for f in result.findings if f.resource_name == "local_auth_openai"]
+    assert len(azr_hits) == 1
+    assert azr_hits[0].check_id == "AZR-002"
+    assert azr_hits[0].severity == "MEDIUM"
+
+
+def test_azure_openai_local_auth_disabled_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "openai" not in named
+    assert "openai_with_acl" not in named
+
+
+def test_azure_openai_local_auth_variable_driven_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "local_auth_from_variable" not in named
+
+
+def test_azure_openai_network_and_auth_findings_have_distinct_details():
+    # detail feeds the fingerprint. AZR-001 and AZR-002 both fire on
+    # exposed_openai; different check_id already keeps them apart, but
+    # confirm the fingerprints are genuinely distinct.
+    result = scan(INSECURE)
+    hits = [f for f in result.findings if f.resource_name == "exposed_openai"]
+    assert len(hits) == 2
+    assert len({f.fingerprint for f in hits}) == 2
+
+
 def test_truthy_or_absent_treats_boolean_false_as_false():
     # Regression: an earlier version fell through every branch for a
     # literal Python False and returned True, which meant an explicitly
