@@ -5,6 +5,7 @@
   <a href="https://pypi.org/project/modelmoat/"><img src="https://img.shields.io/pypi/pyversions/modelmoat.svg" alt="Python versions"></a>
   <a href="LICENSE"><img src="https://img.shields.io/pypi/l/modelmoat.svg" alt="License"></a>
   <a href="https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml"><img src="https://github.com/rashadlee/modelmoat/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+  <a href="https://pepy.tech/projects/modelmoat"><img src="https://static.pepy.tech/personalized-badge/modelmoat?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=BLUE&left_text=downloads" alt="PyPI Downloads"></a>
 </p>
 
 <!-- Image paths in this file are absolute raw.githubusercontent.com URLs
