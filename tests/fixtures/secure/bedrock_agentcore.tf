@@ -12,3 +12,12 @@ resource "aws_bedrockagentcore_gateway" "from_variable" {
   protocol_type   = "MCP"
   authorizer_type = var.authorizer_type
 }
+# exception_level from a variable is unprovable, so it must not be flagged -
+# the same rule every other check follows for interpolated values.
+resource "aws_bedrockagentcore_gateway" "exception_level_from_variable" {
+  name            = "exception-level-from-variable"
+  role_arn        = aws_iam_role.gateway_exec.arn
+  protocol_type   = "MCP"
+  authorizer_type = "AWS_IAM"
+  exception_level = var.exception_level
+}

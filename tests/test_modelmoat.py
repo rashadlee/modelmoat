@@ -1095,28 +1095,149 @@ def test_agentcore_gateway_unknown_authorizer_type_stays_silent():
 
 
 # --------------------------------------------------------------------- #
+# BRK-002: Bedrock AgentCore gateway debug exceptions                   #
+# --------------------------------------------------------------------- #
+def test_agentcore_gateway_debug_exceptions_is_medium():
+    hits = [f for f in scan(INSECURE).findings if f.check_id == "BRK-002"]
+    assert len(hits) == 1
+    assert hits[0].severity == "MEDIUM"
+    assert hits[0].resource_name == "debug_gateway"
+    assert hits[0].detail == "exception_level_debug"
+
+
+def test_agentcore_gateway_debug_exceptions_independent_of_authorizer():
+    # debug_gateway uses authorizer_type = "AWS_IAM" (safe), so BRK-001
+    # must stay silent on it - proves the two checks are independent.
+    hits = [f for f in scan(INSECURE).findings if f.resource_name == "debug_gateway"]
+    assert len(hits) == 1
+    assert hits[0].check_id == "BRK-002"
+
+
+def test_agentcore_gateway_no_exception_level_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "authenticated_gateway" not in named
+
+
+def test_agentcore_gateway_exception_level_from_variable_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "exception_level_from_variable" not in named
+
+
+# --------------------------------------------------------------------- #
 # GCP-001: Vertex AI Reasoning Engine security controls                 #
 # --------------------------------------------------------------------- #
 def test_reasoning_engine_missing_both_controls_reports_two_findings():
     # Independent problems need independent detail tokens, or baselining
     # one would silently suppress the other - the exact bug that shaped
     # VEC-001's fingerprint fix.
-    hits = [f for f in scan(INSECURE).findings if f.check_id == "GCP-001"]
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "GCP-001" and f.resource_name == "exposed_agent"
+    ]
     assert len(hits) == 2
-    assert all(f.resource_name == "exposed_agent" for f in hits)
     assert all(f.severity == "HIGH" for f in hits)
     details = {f.detail for f in hits}
     assert details == {"no_network_isolation", "no_cmek"}
 
 
 def test_reasoning_engine_fingerprints_are_distinct():
-    hits = [f for f in scan(INSECURE).findings if f.check_id == "GCP-001"]
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "GCP-001" and f.resource_name == "exposed_agent"
+    ]
     assert len({f.fingerprint for f in hits}) == 2
 
 
 def test_reasoning_engine_with_psc_and_cmek_stays_silent():
     named = {f.resource_name for f in scan(SECURE).findings}
     assert "prod_agent" not in named
+
+
+# --------------------------------------------------------------------- #
+# GCP-001: Vertex AI Endpoint network isolation                         #
+# --------------------------------------------------------------------- #
+def test_endpoint_missing_network_isolation_is_high():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "GCP-001" and f.resource_name == "exposed_endpoint"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+    assert hits[0].detail == "no_network_isolation"
+
+
+def test_endpoint_missing_cmek_is_not_flagged():
+    # Unlike Reasoning Engine, Endpoint's encryption_spec defaults to a
+    # Google-managed key - only the network finding should fire here.
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "GCP-001" and f.resource_name == "exposed_endpoint"
+    ]
+    assert {f.detail for f in hits} == {"no_network_isolation"}
+
+
+def test_endpoint_with_psc_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "prod_endpoint" not in named
+
+
+# --------------------------------------------------------------------- #
+# GCP-001: Vertex AI Workbench notebook public IP and root access       #
+# --------------------------------------------------------------------- #
+def test_workbench_missing_disable_public_ip_is_medium():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "GCP-001"
+        and f.resource_name == "exposed_notebook"
+        and f.detail == "disable_public_ip"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "MEDIUM"
+
+
+def test_workbench_missing_root_disable_is_low():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "GCP-001"
+        and f.resource_name == "exposed_notebook"
+        and f.detail == "notebook_disable_root"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "LOW"
+
+
+def test_workbench_public_ip_disabled_isolates_root_finding():
+    # disable_public_ip = true here, so only the root-access finding
+    # should fire - proves the two findings are independent.
+    hits = [f for f in scan(INSECURE).findings if f.resource_name == "root_enabled_notebook"]
+    assert len(hits) == 1
+    assert hits[0].detail == "notebook_disable_root"
+    assert hits[0].severity == "LOW"
+
+
+def test_workbench_hardened_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "hardened_notebook" not in named
+
+
+def test_workbench_variable_driven_settings_stay_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "notebook_from_variable" not in named
+
+
+def test_gcp001_findings_across_resource_types_have_unique_fingerprints():
+    # Three resource types under one check_id now (reasoning engine,
+    # endpoint, workbench instance) - none of their detail tokens should
+    # collide in a way that produces a shared fingerprint.
+    hits = [f for f in scan(INSECURE).findings if f.check_id == "GCP-001"]
+    assert len(hits) == 6
+    assert len({f.fingerprint for f in hits}) == 6
 
 
 # --------------------------------------------------------------------- #
