@@ -1,6 +1,7 @@
 """Check registry."""
 
 from .apigateway import APIGatewayAIProxyAuthCheck
+from .apigateway_policy import APIGatewayPublicResourcePolicyCheck
 from .azure_openai import AzureOpenAINetworkCheck
 from .azure_openai_auth import AzureOpenAILocalAuthCheck
 from .bedrock_agentcore import BedrockAgentCoreGatewayCheck
@@ -32,4 +33,5 @@ ALL_CHECKS = [
     ModelPackageGroupPolicyCheck(),
     AzureOpenAILocalAuthCheck(),
     BedrockAgentCoreDebugExceptionsCheck(),
+    APIGatewayPublicResourcePolicyCheck(),
 ]

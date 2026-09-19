@@ -108,7 +108,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | SMK-001 | SageMaker models or training jobs with no `vpc_config`, distributed training jobs leaving inter-instance traffic unencrypted, Studio domains defaulting to public network access for app traffic, or notebook instances defaulting to direct internet access or root access | HIGH to LOW |
 | IAM-001 | Wildcard AI grants (`bedrock:*`, `sagemaker:*` on `Resource "*"`) in inline policies, customer managed policies, policy documents, or attached AWS `FullAccess` policies | HIGH |
 | S3-001 | AI-related buckets exposed by a public ACL or a `Principal "*"` policy, plus weakened or missing public access blocks. A bucket backing a Bedrock Knowledge Base counts even with a name that gives no keyword hint | CRITICAL to LOW |
-| VPC-001 | Lambda functions or ECS Fargate tasks calling Bedrock or SageMaker with no matching interface VPC endpoint in the project | MEDIUM to LOW |
+| VPC-001 | Lambda functions or ECS Fargate tasks calling Bedrock, SageMaker, Comprehend, Rekognition, Textract, Translate, Polly, Lex, Personalize, or Forecast with no matching interface VPC endpoint in the project | MEDIUM to LOW |
 | VEC-001 | OpenSearch (including Serverless), pgvector-capable Postgres, and AI-named ElastiCache missing encryption or network isolation | CRITICAL to LOW |
 | VEC-002 | Self-hosted Weaviate accepting unauthenticated requests, via a `helm_release` value or a container environment variable | HIGH |
 | VEC-003 | Self-hosted vector databases (Qdrant, Weaviate, Milvus) publicly reachable on ECS Fargate | HIGH |
@@ -119,6 +119,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | BRK-002 | Bedrock AgentCore gateways with `exception_level = "DEBUG"`, leaking internal error detail to callers | MEDIUM |
 | GCP-001 | Vertex AI Reasoning Engines or Endpoints with no Private Service Connect network attachment, Reasoning Engines with no CMEK `encryption_spec`, or Workbench notebooks defaulting to a public IP or root access | HIGH to LOW |
 | AGW-001 | API Gateway REST methods with no authorization, proxying directly to a Bedrock or SageMaker runtime invocation | CRITICAL |
+| AGW-002 | API Gateway REST APIs with an AI-backed method and a resource policy allowing `Principal "*"`, which overrides individually-authenticated methods | CRITICAL |
 | SMK-002 | SageMaker Model Package Group resource policies granting `Principal "*"`, removing the account-scoping cross-account model sharing is supposed to have | HIGH |
 
 -----

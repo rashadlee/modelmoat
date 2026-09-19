@@ -255,6 +255,52 @@ def test_fargate_service_with_matching_endpoint_stays_silent():
     assert "fargate_agent" not in named
 
 
+def test_textract_signal_without_endpoint_is_medium():
+    # Textract's fragment is dot-prefixed (".textract"), the same shape as
+    # Bedrock/SageMaker - the straightforward case among the eight services
+    # added beyond Bedrock/SageMaker.
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.resource_name == "textract_agent" and f.detail == "textract"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "MEDIUM"
+
+
+def test_lex_signal_without_endpoint_is_medium():
+    # Lex is the one service whose real endpoint name (models-v2-lex,
+    # runtime-v2-lex) has a hyphen before "lex", not a dot - this proves
+    # the bare-word fragment still matches correctly.
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.resource_name == "lex_agent" and f.detail == "lex"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "MEDIUM"
+
+
+def test_textract_with_matching_endpoint_stays_silent():
+    named = {
+        f.resource_name
+        for f in scan(SECURE).findings
+        if f.detail == "textract"
+    }
+    assert "textract_caller" not in named
+
+
+def test_short_service_names_do_not_match_unrelated_words():
+    # "monopoly" contains "polly" as a substring, "complex" contains "lex"
+    # - whole-token matching must not fire on either, the same
+    # negative-control discipline "email" not matching "ai" and "html" not
+    # matching "ml" already gets elsewhere in this project. This resource
+    # has no vpc_config, so a false match would surface as a LOW finding,
+    # not silence-by-coincidence.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "unrelated_word_collision" not in named
+
+
 _VPC_MISMATCH_SCENARIOS = {
     # name: (endpoint attribute overrides, whether the endpoint lives in the
     # same VPC as the lambda's subnet)
@@ -1275,6 +1321,65 @@ def test_private_rest_api_stays_silent():
 def test_unknown_authorization_stays_silent():
     named = {f.resource_name for f in scan(SECURE).findings}
     assert "from_variable_post" not in named
+
+
+# --------------------------------------------------------------------- #
+# AGW-002: API Gateway resource policy allows any principal             #
+# --------------------------------------------------------------------- #
+def test_inline_public_resource_policy_on_ai_backed_api_is_critical():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "AGW-002" and f.resource_name == "policy_api"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "CRITICAL"
+    assert hits[0].detail == "public_resource_policy"
+
+
+def test_separate_policy_resource_on_ai_backed_api_is_critical():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "AGW-002" and f.resource_name == "separate_policy_api"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "CRITICAL"
+
+
+def test_public_resource_policy_fires_independent_of_method_authorization():
+    # policy_predict_post requires AWS_IAM - looks safe in isolation - so
+    # AGW-001 must stay silent on it, and only AGW-002 should fire on the
+    # REST API itself.
+    result = scan(INSECURE)
+    method_hits = [f for f in result.findings if f.resource_name == "policy_predict_post"]
+    assert method_hits == []
+    api_hits = [f for f in result.findings if f.resource_name == "policy_api"]
+    assert len(api_hits) == 1
+    assert api_hits[0].check_id == "AGW-002"
+
+
+def test_resource_policy_scoped_to_specific_account_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "scoped_policy_api" not in named
+
+
+def test_resource_policy_with_condition_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "conditioned_policy_api" not in named
+
+
+def test_public_resource_policy_with_no_ai_backend_stays_silent():
+    # Generic API Gateway security - no method under this API proxies to
+    # Bedrock or SageMaker - is out of scope, even though the policy
+    # itself is genuinely public.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "no_ai_backend_public_api" not in named
+
+
+def test_resource_policy_from_variable_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "variable_policy_api" not in named
 
 
 # --------------------------------------------------------------------- #

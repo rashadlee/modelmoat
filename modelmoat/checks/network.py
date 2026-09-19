@@ -11,7 +11,15 @@ check distinguishes two situations instead of shouting at both:
           public AWS endpoints, which are TLS plus IAM authenticated. That is
           acceptable for many workloads and the finding says so.
 
-Endpoint matching is on the service fragment (".bedrock-runtime",
+Signal detection (does this Lambda/task/role look like it calls an AI
+service at all) is on whole tokens, never substrings - "lex" and "polly"
+are short enough to collide with ordinary words ("complex", "flexible",
+"monopoly") the same way "email" must never match "ai" elsewhere in this
+project. "bedrock" and "sagemaker" are long and distinctive enough that
+this was never a practical risk for them, but the check now tokenizes
+uniformly rather than trusting each new service name to be safe by luck.
+
+Endpoint matching is separately on the service fragment (".bedrock-runtime",
 ".sagemaker.runtime"), so a service_name built from a region variable still
 matches and does not produce a false positive - but the fragment alone isn't
 enough for an endpoint to count as protecting a given Lambda or Fargate task.
@@ -37,9 +45,26 @@ EC2-launch-type networking - bridge/host mode sharing the instance's own
 ENI - isn't verified here). Signals come from task_role_arn, the role the
 application code actually assumes at runtime, not execution_role_arn, which
 only pulls images and writes logs.
+
+Beyond Bedrock and SageMaker, IAM-001 already treats eight more services as
+AI-relevant for wildcard-grant purposes: Comprehend, Rekognition, Textract,
+Translate, Polly, Lex, Personalize, and Forecast. All eight were verified
+against AWS's own PrivateLink support reference and each service's VPC
+endpoint documentation to confirm every one actually supports interface
+endpoints (a service that didn't would make "no endpoint" the only
+possible state, not a misconfiguration) - none excluded. Most endpoint-name
+fragments are the base service name with its leading dot (".comprehend",
+".textract", and so on); Personalize's and Forecast's sub-endpoints
+(-events/-runtime, forecastquery) still contain that same dot-prefixed
+fragment as a substring, so one entry covers all of a service's variants.
+Lex is the one exception verified not to fit that shape: its real service
+names are models-v2-lex and runtime-v2-lex, with a hyphen before "lex",
+not a dot, so its fragment is the bare word with no leading dot.
 """
 
 from __future__ import annotations
+
+import re
 
 from ..graph import (
     ProjectGraph,
@@ -58,7 +83,27 @@ _DOCS = "https://docs.aws.amazon.com/bedrock/latest/userguide/vpc-interface-endp
 _SERVICES = {
     "bedrock": ".bedrock-runtime",
     "sagemaker": ".sagemaker.runtime",
+    "comprehend": ".comprehend",
+    "rekognition": ".rekognition",
+    "textract": ".textract",
+    "translate": ".translate",
+    "polly": ".polly",
+    "lex": "lex",
+    "personalize": ".personalize",
+    "forecast": ".forecast",
 }
+
+_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+
+
+def _service_tokens(text: str) -> set[str]:
+    """Whole-token service-name matches in text - never a substring match.
+
+    "lex" and "polly" are short enough to collide with ordinary words
+    ("complex", "flexible", "monopoly"), the same reasoning behind whole
+    -token matching everywhere else in this project.
+    """
+    return {t for t in _TOKEN_SPLIT.split(text.lower()) if t} & _SERVICES.keys()
 
 
 class AIVPCEndpointCheck:
@@ -239,10 +284,8 @@ class AIVPCEndpointCheck:
             for entry in container.get("environment") or []:
                 if not isinstance(entry, dict):
                     continue
-                text = f"{entry.get('name', '')} {entry.get('value', '')}".lower()
-                for service in _SERVICES:
-                    if service in text:
-                        signals.add(service)
+                text = f"{entry.get('name', '')} {entry.get('value', '')}"
+                signals |= _service_tokens(text)
 
         role_label = extract_ref(task_def.config.get("task_role_arn"), "aws_iam_role")
         if role_label:
@@ -259,10 +302,8 @@ class AIVPCEndpointCheck:
             variables = environment.get("variables")
             if isinstance(variables, dict):
                 for key, value in variables.items():
-                    text = f"{key} {value}".lower()
-                    for service in _SERVICES:
-                        if service in text:
-                            signals.add(service)
+                    text = f"{key} {value}"
+                    signals |= _service_tokens(text)
 
         role_label = extract_ref(function.config.get("role"), "aws_iam_role")
         if role_label:
@@ -281,10 +322,7 @@ class AIVPCEndpointCheck:
             label = extract_ref(role_value, "aws_iam_role")
             if not label:
                 return
-            lowered = text.lower()
-            for service in _SERVICES:
-                if service in lowered:
-                    signals.setdefault((module, label), set()).add(service)
+            signals.setdefault((module, label), set()).update(_service_tokens(text))
 
         policies_by_module_label = {
             (p.module, p.name): p for p in graph.by_type("aws_iam_policy")
