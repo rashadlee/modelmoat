@@ -116,7 +116,8 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | AZR-001 | Azure OpenAI / AI Services accounts reachable from the public internet, via `public_network_access_enabled` or a missing `network_acls` deny rule | HIGH |
 | AZR-002 | Azure OpenAI / AI Services accounts allowing local (API key) authentication instead of Microsoft Entra ID only | MEDIUM |
 | BRK-001 | Bedrock AgentCore gateways with `authorizer_type = "NONE"`, so any caller can invoke every tool the gateway exposes | CRITICAL |
-| GCP-001 | Vertex AI Reasoning Engines with no Private Service Connect network attachment or no CMEK `encryption_spec` | HIGH |
+| BRK-002 | Bedrock AgentCore gateways with `exception_level = "DEBUG"`, leaking internal error detail to callers | MEDIUM |
+| GCP-001 | Vertex AI Reasoning Engines or Endpoints with no Private Service Connect network attachment, Reasoning Engines with no CMEK `encryption_spec`, or Workbench notebooks defaulting to a public IP or root access | HIGH to LOW |
 | AGW-001 | API Gateway REST methods with no authorization, proxying directly to a Bedrock or SageMaker runtime invocation | CRITICAL |
 | SMK-002 | SageMaker Model Package Group resource policies granting `Principal "*"`, removing the account-scoping cross-account model sharing is supposed to have | HIGH |
 
