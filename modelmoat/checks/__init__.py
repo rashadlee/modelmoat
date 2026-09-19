@@ -3,6 +3,7 @@
 from .apigateway import APIGatewayAIProxyAuthCheck
 from .apigateway_policy import APIGatewayPublicResourcePolicyCheck
 from .azure_ai_search import AzureAISearchCheck
+from .azure_databricks import AzureDatabricksNetworkCheck
 from .azure_machine_learning import AzureMachineLearningNetworkCheck
 from .azure_openai import AzureOpenAINetworkCheck
 from .azure_openai_auth import AzureOpenAILocalAuthCheck
@@ -38,4 +39,5 @@ ALL_CHECKS = [
     APIGatewayPublicResourcePolicyCheck(),
     AzureMachineLearningNetworkCheck(),
     AzureAISearchCheck(),
+    AzureDatabricksNetworkCheck(),
 ]
