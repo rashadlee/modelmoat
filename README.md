@@ -128,6 +128,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | CMP-001 | Comprehend custom entity recognizer or document classifier training jobs with no `vpc_config` | HIGH |
 | DBX-002 | Databricks clusters with `data_security_mode` explicitly set to `"NONE"` or `"NO_ISOLATION"`, sharing credentials between attached users | HIGH |
 | LFU-001 | Lambda Function URLs with `authorization_type = "NONE"` and a matching public resource policy, calling Bedrock or SageMaker | CRITICAL |
+| GCP-002 | Cloud Run services granting `roles/run.invoker` to `allUsers` while running as a service account with Vertex AI access | CRITICAL |
 
 -----
 
