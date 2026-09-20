@@ -12,6 +12,7 @@ from .bedrock_agentcore_debug import BedrockAgentCoreDebugExceptionsCheck
 from .cloud_run_vertex_ai import CloudRunVertexAIPublicAccessCheck
 from .comprehend import ComprehendTrainingNetworkCheck
 from .databricks_cluster import DatabricksClusterIsolationCheck
+from .databricks_unity_catalog import DatabricksUnityCatalogIsolationCheck
 from .datastores import VectorDataStoreCheck
 from .ecs_vectorstore import ECSVectorStoreReachabilityCheck
 from .iam import AIServiceIAMCheck
@@ -48,4 +49,5 @@ ALL_CHECKS = [
     DatabricksClusterIsolationCheck(),
     LambdaFunctionURLPublicAIAccessCheck(),
     CloudRunVertexAIPublicAccessCheck(),
+    DatabricksUnityCatalogIsolationCheck(),
 ]

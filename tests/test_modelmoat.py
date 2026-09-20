@@ -1316,6 +1316,50 @@ def test_cluster_variable_driven_stays_silent():
 
 
 # --------------------------------------------------------------------- #
+# DBX-003: Unity Catalog objects open to every workspace                #
+# --------------------------------------------------------------------- #
+def test_open_catalog_by_default_is_medium():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "DBX-003" and f.resource_name == "open_catalog"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "MEDIUM"
+    assert hits[0].detail == "isolation_mode"
+
+
+def test_open_schema_storage_credential_and_external_location_all_fire():
+    hits = {
+        f.resource_name
+        for f in scan(INSECURE).findings
+        if f.check_id == "DBX-003"
+    }
+    assert hits == {
+        "open_catalog",
+        "open_schema",
+        "open_credential",
+        "open_location",
+    }
+
+
+def test_isolated_unity_catalog_objects_stay_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    for resource_name in (
+        "isolated_catalog",
+        "isolated_schema",
+        "isolated_credential",
+        "isolated_location",
+    ):
+        assert resource_name not in named
+
+
+def test_unity_catalog_variable_driven_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "variable_catalog" not in named
+
+
+# --------------------------------------------------------------------- #
 # LFU-001: Lambda Function URL with no auth calling an AI service       #
 # --------------------------------------------------------------------- #
 def test_public_function_url_calling_bedrock_is_critical():
