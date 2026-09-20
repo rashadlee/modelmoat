@@ -14,7 +14,7 @@ from . import __version__
 from .baseline import BaselineError, apply_baseline, load_baseline, write_baseline
 from .checks import ALL_CHECKS
 from .sarif import to_sarif_json
-from .scanner import SEVERITIES, SEVERITY_RANK, Scanner
+from .scanner import SEVERITIES, SEVERITY_RANK, Finding, Scanner
 
 app = typer.Typer(
     name="modelmoat",
@@ -31,6 +31,16 @@ _COLORS = {
     "MEDIUM": "yellow",
     "LOW": "blue",
 }
+
+# Only LOW findings ever collapse into a summary line, never MEDIUM/HIGH/
+# CRITICAL regardless of volume - those are exactly the ones --fail-on's
+# default (HIGH) can gate a build on, and hiding per-finding detail on
+# them would trade a real risk (missing something that matters) for a
+# cosmetic one (a long scrollback). LOW already can't fail a build with
+# any of this project's documented --fail-on defaults, so collapsing it
+# has no such downside - it only shortens output for the interactive,
+# human-reading case; --json and --sarif always carry every finding.
+_GROUP_THRESHOLD = 4
 
 
 def _version_callback(value: bool) -> None:
@@ -143,6 +153,17 @@ def scan(
             "Off by default: an empty result usually means .tf.json files were "
             "missed or the wrong path was given, and that must not look the same "
             "as a scan that actually found clean infrastructure.",
+        ),
+    ] = False,
+    no_group: Annotated[
+        bool,
+        typer.Option(
+            "--no-group",
+            help="Print every LOW finding individually instead of collapsing a "
+            "check that produced many of them into one summary line. Grouping "
+            "only changes human-readable output - it never affects --json, "
+            "--sarif, --write-baseline, or --fail-on, which all see every "
+            "finding regardless of this flag.",
         ),
     ] = False,
 ) -> None:
@@ -306,27 +327,65 @@ def scan(
         console.print("[green]No findings at or above the requested severity.[/green]")
         raise typer.Exit(code=exit_code)
 
-    for finding in result.findings:
-        color = _COLORS.get(finding.severity, "white")
-        # resource_type/name/file_path/message/remediation all ultimately
-        # come from the scanned Terraform, not from modelmoat itself - a
-        # crafted resource label containing Rich markup must render as
-        # literal text, not be interpreted as styling (or, unbalanced,
-        # crash rendering and lose every finding's output along with it).
-        console.print(
-            f"[{color}]{finding.severity:<8}[/{color}] [bold]{finding.check_id}[/bold]  "
-            f"{escape(finding.resource_type)}.{escape(finding.resource_name)}"
-        )
-        console.print(f"         [dim]{escape(finding.file_path)}:{finding.line}[/dim]")
-        console.print(f"         {escape(finding.message)}")
-        console.print(f"         [dim]fix:[/dim] {escape(finding.remediation)}")
-        console.print()
+    grouped_any = False
+    if no_group:
+        for finding in result.findings:
+            _print_finding(finding)
+    else:
+        low_counts: dict[str, int] = {}
+        for finding in result.findings:
+            if finding.severity == "LOW":
+                low_counts[finding.check_id] = low_counts.get(finding.check_id, 0) + 1
 
-    console.print(
+        summarized: set[str] = set()
+        for finding in result.findings:
+            if finding.severity == "LOW" and low_counts[finding.check_id] >= _GROUP_THRESHOLD:
+                if finding.check_id in summarized:
+                    continue
+                summarized.add(finding.check_id)
+                grouped_any = True
+                _print_group_summary(finding.check_id, low_counts[finding.check_id])
+            else:
+                _print_finding(finding)
+
+    hint = (
         "[dim]--json for machine-readable output, --min-severity to filter, "
         "--fail-on to tune CI exit codes.[/dim]"
     )
+    if grouped_any:
+        hint += "[dim] --no-group to list every LOW finding individually.[/dim]"
+    console.print(hint)
     raise typer.Exit(code=exit_code)
+
+
+def _print_finding(finding: Finding) -> None:
+    color = _COLORS.get(finding.severity, "white")
+    # resource_type/name/file_path/message/remediation all ultimately come
+    # from the scanned Terraform, not from modelmoat itself - a crafted
+    # resource label containing Rich markup must render as literal text,
+    # not be interpreted as styling (or, unbalanced, crash rendering and
+    # lose every finding's output along with it).
+    console.print(
+        f"[{color}]{finding.severity:<8}[/{color}] [bold]{finding.check_id}[/bold]  "
+        f"{escape(finding.resource_type)}.{escape(finding.resource_name)}"
+    )
+    console.print(f"         [dim]{escape(finding.file_path)}:{finding.line}[/dim]")
+    console.print(f"         {escape(finding.message)}")
+    console.print(f"         [dim]fix:[/dim] {escape(finding.remediation)}")
+    console.print()
+
+
+def _print_group_summary(check_id: str, count: int) -> None:
+    color = _COLORS["LOW"]
+    console.print(
+        f"[{color}]LOW     [/{color}] [bold]{check_id}[/bold]  "
+        f"{count} similar findings collapsed"
+    )
+    console.print(
+        "         [dim]run with --no-group or --json to see each one "
+        "individually[/dim]"
+    )
+    console.print()
 
 
 def main() -> None:

@@ -157,6 +157,12 @@ Tighten with `--fail-on MEDIUM` once your baseline is clean, or loosen to
 printed and is separate from what fails the build, so you can see everything
 while only blocking on the serious findings.
 
+A project with many LOW findings from the same check collapses them into one
+summary line in human-readable output, since LOW can never fail a build under
+any `--fail-on` setting. `--json` and `--sarif` always carry every finding
+individually regardless; pass `--no-group` to do the same in human-readable
+output.
+
 ### GitHub code scanning
 
 `--sarif` emits SARIF 2.1.0, so findings land in the repository Security tab

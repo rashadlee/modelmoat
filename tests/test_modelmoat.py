@@ -2822,3 +2822,146 @@ def test_cli_baseline_errors_use_exit_code_two(tmp_path):
         ],
     )
     assert both.exit_code == 2
+
+
+# --------------------------------------------------------------------- #
+# CLI output grouping for high-volume LOW findings                      #
+# --------------------------------------------------------------------- #
+def _write_lambda_bedrock_fixture(tmp_path, count: int) -> None:
+    """count Lambda functions sharing one bedrock-granting role, none in a
+    VPC - each produces exactly one LOW VPC-001 finding, plus a single
+    shared HIGH IAM-001 finding on the role's own wildcard policy.
+    """
+    lines = [
+        'resource "aws_iam_role" "bedrock_role" {',
+        '  name = "bedrock-role"',
+        "}",
+        'resource "aws_iam_role_policy" "bedrock_policy" {',
+        '  name = "bedrock-policy"',
+        "  role = aws_iam_role.bedrock_role.id",
+        "  policy = jsonencode({",
+        '    Version = "2012-10-17"',
+        '    Statement = [{ Effect = "Allow", Action = ["bedrock:*"], Resource = "*" }]',
+        "  })",
+        "}",
+    ]
+    for i in range(count):
+        lines += [
+            f'resource "aws_lambda_function" "fn{i}" {{',
+            f'  function_name = "fn{i}"',
+            "  role          = aws_iam_role.bedrock_role.arn",
+            '  runtime       = "python3.12"',
+            '  handler       = "app.handler"',
+            "}",
+        ]
+    (tmp_path / "main.tf").write_text("\n".join(lines) + "\n")
+
+
+def test_low_findings_below_threshold_stay_individual(tmp_path):
+    _write_lambda_bedrock_fixture(tmp_path, 3)
+    runner = CliRunner()
+    result = runner.invoke(app, ["scan", str(tmp_path)])
+    assert result.output.count("aws_lambda_function.fn") == 3
+    assert "similar findings collapsed" not in result.output
+    assert "--no-group" not in result.output
+
+
+def test_low_findings_at_threshold_collapse_into_one_summary(tmp_path):
+    _write_lambda_bedrock_fixture(tmp_path, 4)
+    runner = CliRunner()
+    result = runner.invoke(app, ["scan", str(tmp_path)])
+    assert result.output.count("aws_lambda_function.fn") == 0
+    assert "4 similar findings collapsed" in result.output
+    assert "run with --no-group or --json to see each one individually" in result.output
+    assert "--no-group to list every LOW finding individually" in result.output
+
+
+def test_no_group_flag_restores_individual_low_findings(tmp_path):
+    _write_lambda_bedrock_fixture(tmp_path, 4)
+    runner = CliRunner()
+    result = runner.invoke(app, ["scan", str(tmp_path), "--no-group"])
+    assert result.output.count("aws_lambda_function.fn") == 4
+    assert "similar findings collapsed" not in result.output
+    assert "--no-group to list" not in result.output
+
+
+def test_grouping_never_changes_exit_code(tmp_path):
+    _write_lambda_bedrock_fixture(tmp_path, 4)
+    runner = CliRunner()
+    grouped = runner.invoke(app, ["scan", str(tmp_path)])
+    ungrouped = runner.invoke(app, ["scan", str(tmp_path), "--no-group"])
+    assert grouped.exit_code == ungrouped.exit_code
+
+
+def test_grouping_never_affects_json_output(tmp_path):
+    _write_lambda_bedrock_fixture(tmp_path, 4)
+    runner = CliRunner()
+    result = runner.invoke(app, ["scan", str(tmp_path), "--json"])
+    data = json.loads(result.stdout)
+    low_vpc001 = [
+        f for f in data["findings"] if f["check_id"] == "VPC-001" and f["severity"] == "LOW"
+    ]
+    assert len(low_vpc001) == 4
+
+
+def test_grouping_never_affects_sarif_output(tmp_path):
+    _write_lambda_bedrock_fixture(tmp_path, 4)
+    runner = CliRunner()
+    result = runner.invoke(app, ["scan", str(tmp_path), "--sarif"])
+    data = json.loads(result.stdout)
+    low_vpc001 = [
+        r for r in data["runs"][0]["results"]
+        if r["ruleId"] == "VPC-001" and r["level"] == "note"
+    ]
+    assert len(low_vpc001) == 4
+
+
+def test_high_severity_findings_never_group_regardless_of_count(tmp_path):
+    # Grouping is deliberately gated to LOW only - HIGH/CRITICAL findings
+    # keep full per-finding detail no matter how many there are, since
+    # those are exactly the ones --fail-on's default (HIGH) can gate a
+    # build on. Six distinct roles, each with its own wildcard bedrock
+    # grant, produce six independent HIGH IAM-001 findings.
+    lines = []
+    for i in range(6):
+        lines += [
+            f'resource "aws_iam_role" "role{i}" {{',
+            f'  name = "role{i}"',
+            "}",
+            f'resource "aws_iam_role_policy" "policy{i}" {{',
+            f'  name = "policy{i}"',
+            f"  role = aws_iam_role.role{i}.id",
+            "  policy = jsonencode({",
+            '    Version = "2012-10-17"',
+            '    Statement = [{ Effect = "Allow", Action = ["bedrock:*"], Resource = "*" }]',
+            "  })",
+            "}",
+        ]
+    (tmp_path / "main.tf").write_text("\n".join(lines) + "\n")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["scan", str(tmp_path)])
+    assert result.output.count("aws_iam_role_policy.policy") == 6
+    assert "similar findings collapsed" not in result.output
+
+
+def test_min_severity_high_filters_low_before_grouping_applies(tmp_path):
+    # --min-severity HIGH drops the 4 LOW findings before the grouping
+    # logic ever sees them, so neither individual LOW lines nor a grouped
+    # summary should appear - only the summary counts line still says
+    # "LOW: 0", which is a different thing from a LOW finding printing.
+    _write_lambda_bedrock_fixture(tmp_path, 4)
+    runner = CliRunner()
+    result = runner.invoke(app, ["scan", str(tmp_path), "--min-severity", "HIGH"])
+    assert "LOW: 0" in result.output
+    assert "aws_lambda_function.fn" not in result.output
+    assert "similar findings collapsed" not in result.output
+    assert "--no-group to list" not in result.output
+
+
+def test_secure_fixture_still_reports_no_findings_with_grouping_enabled():
+    runner = CliRunner()
+    result = runner.invoke(app, ["scan", str(SECURE)])
+    assert result.exit_code == 0
+    assert "No findings at or above the requested severity." in result.output
+    assert "similar findings collapsed" not in result.output
