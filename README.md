@@ -80,8 +80,8 @@ Python 3.10 or newer.
 Real output from the test fixtures in this repo:
 
 ```
-modelmoat 0.5.0 scanned 16 Terraform file(s)
-  CRITICAL: 12  HIGH: 24  MEDIUM: 7  LOW: 4
+modelmoat 0.6.0 scanned 23 Terraform file(s)
+  CRITICAL: 17  HIGH: 29  MEDIUM: 24  LOW: 8
 
 CRITICAL S3-001  aws_s3_bucket.datasets
          tests/fixtures/insecure/s3_bad.tf:11
@@ -96,8 +96,8 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
          tests/fixtures/insecure/iam_bad.tf:12
          Role 'agent_role' attaches AWS managed policy
          'arn:aws:iam::aws:policy/AmazonBedrockFullAccess', which grants blanket
-         AI service access. The role is used by Lambda function(s) public_agent,
-         vpc_agent.
+         AI service access. The role is used by Lambda function(s) lex_agent,
+         public_agent, public_url_agent, textract_agent, vpc_agent.
 ```
 
 -----

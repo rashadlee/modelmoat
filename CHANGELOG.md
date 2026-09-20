@@ -2,6 +2,93 @@
 
 Notable changes to modelmoat. Versions follow [semantic versioning](https://semver.org).
 
+## 0.6.0 - 2026-09-20
+
+### Added
+
+- AZR-002 flags an `azurerm_cognitive_account` allowing local (API key)
+  authentication instead of Microsoft Entra ID only -
+  `local_auth_enabled` defaults to `true`, backed by a built-in Azure
+  Policy definition. MEDIUM, not HIGH: the account still requires some
+  form of authentication either way, so this is a blast-radius finding (a
+  leaked key authenticates with no tie to a real identity and no
+  per-identity revocation), not a reachability one like AZR-001.
+- BRK-002 flags an `aws_bedrockagentcore_gateway` with
+  `exception_level = "DEBUG"`, which returns granular internal error
+  detail (Lambda errors, egress authorizer errors, parameter validation
+  errors) instead of the sanitized messages AWS returns by default.
+  MEDIUM, independent of BRK-001 on the same resource.
+- AGW-002 flags an API Gateway REST API's resource policy granting
+  `Principal "*"` on `execute-api:Invoke`. AWS's own authorization docs
+  state a permissive resource policy overrides individually-authenticated
+  methods, so a method requiring `AWS_IAM` is not actually protected when
+  this is present. CRITICAL, gated on the same AI-backend proof AGW-001
+  already requires.
+- VPC-001 extended from Bedrock/SageMaker to eight more AI services
+  already in IAM-001's action list: Comprehend, Rekognition, Textract,
+  Translate, Polly, Lex, Personalize, Forecast - each verified against
+  AWS's PrivateLink support reference first. Signal detection switched
+  from substring to whole-token matching in the same change, since short
+  names like "lex" and "polly" can otherwise collide with ordinary words.
+- AML-001: a new Azure Machine Learning check family. Both
+  `azurerm_machine_learning_workspace.public_network_access_enabled` and
+  `azurerm_machine_learning_compute_instance.node_public_ip_enabled`
+  default to `true`, confirmed against Microsoft's own security baseline
+  and an Azure Policy built-in definition. MEDIUM: Entra ID authentication
+  is still required regardless of network settings. Extended in the same
+  release to `azurerm_ai_foundry` hubs, a newer resource on the identical
+  ARM API family, defaulting `public_network_access` to `"Enabled"`.
+- GCP-001 extended to `google_vertex_ai_endpoint` (the same
+  public-by-default, IAM-still-required shape as Reasoning Engine, HIGH)
+  and `google_workbench_instance` (`disable_public_ip` defaults to
+  `false`, MEDIUM; `notebook-disable-root` metadata defaults to `"false"`,
+  LOW - the same blast-radius shape as SMK-001's `root_access` finding).
+- ASR-001: a new Azure AI Search check family.
+  `public_network_access_enabled` and `local_authentication_enabled` both
+  default to `true` on `azurerm_search_service`, each backed by its own
+  Azure Policy built-in definition. MEDIUM on both - Microsoft's own
+  security baseline confirms a caller must still present a valid
+  authorization token even with public network access enabled.
+- DBX-001: a new Azure Databricks check family.
+  `azurerm_databricks_workspace.public_network_access_enabled` defaults to
+  `true`, confirmed against Microsoft's own Databricks security baseline
+  and an Azure Policy built-in definition. MEDIUM - Entra ID authentication
+  is required for data-plane access regardless of this setting.
+- DBX-002 flags a `databricks_cluster` with `data_security_mode` explicitly
+  set to `"NONE"` or its legacy alias `"NO_ISOLATION"`, which runs code
+  from every attached user in the same shared environment. Databricks's
+  own admin documentation states a higher-privileged user's token becomes
+  visible to every other attached user. HIGH, and - unlike almost every
+  other finding in this project - fires only on an explicit insecure
+  value, never on absence, since Databricks's own docs state omission
+  enables default security features.
+- CMP-001: a new Comprehend check family, distinct from VPC-001's existing
+  caller-side check. `aws_comprehend_entity_recognizer` and
+  `aws_comprehend_document_classifier` training jobs with no `vpc_config`
+  reach AWS resources over the internet rather than staying inside a VPC,
+  per AWS's own Comprehend VPC documentation. HIGH.
+- LFU-001 flags an `aws_lambda_function_url` with
+  `authorization_type = "NONE"` and a matching `aws_lambda_permission`
+  granting public `lambda:InvokeFunctionUrl` access, calling Bedrock or
+  SageMaker. AWS's own docs state this performs no authentication at all
+  before invoking the function - a genuine zero-authentication path,
+  unlike this project's usual "reachable but still signed" shape. CRITICAL.
+- GCP-002 flags a `google_cloud_run_v2_service` granting
+  `roles/run.invoker` to `allUsers` while running as a service account
+  holding a `roles/aiplatform.*` grant. Google's own IAM documentation
+  confirms this is a genuine zero-authentication path, and that ingress
+  settings do not substitute for it. CRITICAL.
+
+### Changed
+
+- Human-readable output now collapses a check that produces many LOW
+  findings into a single summary line, instead of printing each one in
+  full. This only affects the default terminal view - `--json`, `--sarif`,
+  `--write-baseline`, and `--fail-on`'s exit code all still see every
+  finding individually regardless, and MEDIUM/HIGH/CRITICAL findings never
+  collapse no matter how many there are. Pass `--no-group` to restore the
+  previous flat listing in human-readable output.
+
 ## 0.5.0 - 2026-09-07
 
 ### Added
