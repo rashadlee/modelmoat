@@ -31,6 +31,7 @@ from modelmoat.baseline import (
     write_baseline,
 )
 from modelmoat.checks import ALL_CHECKS
+from modelmoat.checks.databricks_ip_access_list import DatabricksIPAccessListCheck
 from modelmoat.cli import app
 from modelmoat.graph import _read_terraform_file, ai_tokens_in, build_graph, unquote
 from modelmoat.policy import (
@@ -1405,6 +1406,100 @@ def test_isolated_unity_catalog_objects_stay_silent():
 def test_unity_catalog_variable_driven_stays_silent():
     named = {f.resource_name for f in scan(SECURE).findings}
     assert "variable_catalog" not in named
+
+
+# --------------------------------------------------------------------- #
+# DBX-004: publicly reachable Databricks workspace, no IP allow list    #
+# --------------------------------------------------------------------- #
+def test_public_workspace_with_no_allow_list_anywhere_is_low():
+    # exposed_workspace (azure_databricks_bad.tf) is already publicly
+    # reachable per DBX-001, and no databricks_ip_access_list resource
+    # exists anywhere in the insecure fixture tree.
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "DBX-004" and f.resource_name == "exposed_workspace"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "LOW"
+    assert hits[0].detail == "no_ip_access_list"
+
+
+def test_private_workspace_stays_silent_regardless_of_allow_list():
+    # private_workspace has no public endpoint at all, so an IP allow list
+    # would be a moot suggestion - DBX-004 must not fire on it.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "private_workspace" not in named
+
+
+def test_allow_list_suppresses_finding_for_an_otherwise_public_workspace(tmp_path):
+    # Isolated from DBX-001 deliberately: DBX-001 would independently flag
+    # this same public workspace regardless of any IP list, so this test
+    # calls DBX-004 directly against its own graph rather than going
+    # through scan(), which would conflate the two checks' findings.
+    (tmp_path / "main.tf").write_text(
+        """
+resource "azurerm_databricks_workspace" "public_but_allow_listed" {
+  name                = "public-but-allow-listed"
+  resource_group_name = "ai-rg"
+  location            = "eastus"
+  sku                 = "premium"
+}
+resource "databricks_ip_access_list" "office" {
+  label        = "office"
+  list_type    = "ALLOW"
+  ip_addresses = ["203.0.113.0/24"]
+}
+"""
+    )
+    graph = build_graph([tmp_path])
+    findings = DatabricksIPAccessListCheck().run(graph)
+    assert findings == []
+
+
+def test_block_type_list_does_not_suppress_the_finding(tmp_path):
+    (tmp_path / "main.tf").write_text(
+        """
+resource "azurerm_databricks_workspace" "public_with_block_list" {
+  name                = "public-with-block-list"
+  resource_group_name = "ai-rg"
+  location            = "eastus"
+  sku                 = "premium"
+}
+resource "databricks_ip_access_list" "known_bad" {
+  label        = "known-bad"
+  list_type    = "BLOCK"
+  ip_addresses = ["198.51.100.0/24"]
+}
+"""
+    )
+    graph = build_graph([tmp_path])
+    findings = DatabricksIPAccessListCheck().run(graph)
+    assert len(findings) == 1
+    assert findings[0].resource_name == "public_with_block_list"
+
+
+def test_disabled_allow_list_does_not_suppress_the_finding(tmp_path):
+    (tmp_path / "main.tf").write_text(
+        """
+resource "azurerm_databricks_workspace" "public_with_disabled_list" {
+  name                = "public-with-disabled-list"
+  resource_group_name = "ai-rg"
+  location            = "eastus"
+  sku                 = "premium"
+}
+resource "databricks_ip_access_list" "inactive" {
+  label        = "inactive"
+  list_type    = "ALLOW"
+  ip_addresses = ["203.0.113.0/24"]
+  enabled      = false
+}
+"""
+    )
+    graph = build_graph([tmp_path])
+    findings = DatabricksIPAccessListCheck().run(graph)
+    assert len(findings) == 1
+    assert findings[0].resource_name == "public_with_disabled_list"
 
 
 # --------------------------------------------------------------------- #

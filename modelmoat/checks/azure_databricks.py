@@ -51,6 +51,18 @@ _DOCS_URL = (
 )
 
 
+def is_publicly_reachable(workspace) -> bool:
+    """True when public_network_access_enabled is absent or true.
+
+    Exposed for DBX-004's IP-access-list check to reuse, the same
+    cross-check pattern AGW-002/LFU-001/GCF-001 already use elsewhere -
+    a workspace that's already fully private has no public endpoint for
+    an IP access list to filter, so suggesting one there would be a
+    confusing, moot recommendation.
+    """
+    return truthy_or_absent(workspace.config.get("public_network_access_enabled"))
+
+
 class AzureDatabricksNetworkCheck:
     check_id = "DBX-001"
     check_name = "Azure Databricks Workspace Reachable From the Public Internet"
@@ -60,7 +72,7 @@ class AzureDatabricksNetworkCheck:
 
         for workspace in graph.by_type("azurerm_databricks_workspace"):
             value = workspace.config.get("public_network_access_enabled")
-            if not truthy_or_absent(value):
+            if not is_publicly_reachable(workspace):
                 continue
 
             state = (

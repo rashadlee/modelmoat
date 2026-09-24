@@ -13,6 +13,7 @@ from .cloud_functions_vertex_ai import CloudFunctionsVertexAIPublicAccessCheck
 from .cloud_run_vertex_ai import CloudRunVertexAIPublicAccessCheck
 from .comprehend import ComprehendTrainingNetworkCheck
 from .databricks_cluster import DatabricksClusterIsolationCheck
+from .databricks_ip_access_list import DatabricksIPAccessListCheck
 from .databricks_unity_catalog import DatabricksUnityCatalogIsolationCheck
 from .datastores import VectorDataStoreCheck
 from .ecs_vectorstore import ECSVectorStoreReachabilityCheck
@@ -54,4 +55,5 @@ ALL_CHECKS = [
     DatabricksUnityCatalogIsolationCheck(),
     CloudFunctionsVertexAIPublicAccessCheck(),
     VertexAISearchACLCheck(),
+    DatabricksIPAccessListCheck(),
 ]
