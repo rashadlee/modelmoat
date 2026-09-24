@@ -12,6 +12,22 @@ for every request regardless of network configuration, so this is exposure
 of the account's network reachability and attack surface, not an
 unauthenticated open endpoint - the finding says so, matching how SMK-001
 frames the equivalent SageMaker case.
+
+Extended 2026-09-21 from {OpenAI, AIServices} to also cover FormRecognizer
+(Document Intelligence), ContentSafety, and SpeechServices - confirmed
+these are the same azurerm_cognitive_account resource and the same two
+fields with identical documented defaults, not a kind-specific carve-out.
+`kind` is purely a validated string discriminator in the provider (one
+allowlist, not per-kind schema branches - confirmed via the provider
+source and a real bug, GitHub issue #23531, where ContentSafety was
+simply missing from that Terraform-side allowlist until v3.85.0, not
+treated differently by Azure's API), and the cited Azure Policy built-ins
+target `Microsoft.CognitiveServices/accounts` as a resource type with no
+`kind` condition, applying uniformly. Other kinds (Face, Personalizer,
+AnomalyDetector, LUIS, and so on) are deliberately left out - not because
+the mechanism would behave differently, but because they fall outside
+this project's AI/ML infrastructure scope the way Face and Personalizer
+do, not because of any technical distinction in how the fields work.
 """
 
 from __future__ import annotations
@@ -19,7 +35,7 @@ from __future__ import annotations
 from ..graph import ProjectGraph, first_block, is_unknown, truthy_or_absent
 from ..scanner import Finding
 
-_AI_KINDS = {"OpenAI", "AIServices"}
+_AI_KINDS = {"OpenAI", "AIServices", "FormRecognizer", "ContentSafety", "SpeechServices"}
 _DOCS_URL = "https://learn.microsoft.com/en-us/azure/ai-services/cognitive-services-virtual-networks"
 
 

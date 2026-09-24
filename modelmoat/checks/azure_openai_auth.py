@@ -20,6 +20,13 @@ conditional access or MFA, and no per-identity revocation - only rotating
 or deleting the key itself stops it. An Entra ID token is tied to a real
 principal, inherits whatever conditional access policies apply to it, and
 can be revoked without touching the account's keys at all.
+
+Extended 2026-09-21 to also cover FormRecognizer (Document Intelligence),
+ContentSafety, and SpeechServices - see AZR-001's docstring for why this
+is a same-mechanism extension, not a new check. The Azure OpenAI
+Studio-breakage caveat in this check's remediation only applies to the
+OpenAI kind, so it is worded conditionally rather than stated flatly for
+every kind.
 """
 
 from __future__ import annotations
@@ -27,7 +34,7 @@ from __future__ import annotations
 from ..graph import ProjectGraph, is_unknown, truthy_or_absent
 from ..scanner import Finding
 
-_AI_KINDS = {"OpenAI", "AIServices"}
+_AI_KINDS = {"OpenAI", "AIServices", "FormRecognizer", "ContentSafety", "SpeechServices"}
 _DOCS_URL = (
     "https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/"
     "how-to/configure-entra-id"
@@ -76,9 +83,14 @@ class AzureOpenAILocalAuthCheck:
                         f"Set local_auth_enabled = false on {account.type}."
                         f"{account.name} and grant callers a role such as "
                         '"Cognitive Services OpenAI User" via Microsoft Entra '
-                        "ID instead. Note this breaks Azure OpenAI Studio, "
-                        "which requires key access - confirm nothing still "
-                        "depends on it before disabling."
+                        "ID instead."
+                        + (
+                            " Note this breaks Azure OpenAI Studio, which "
+                            "requires key access - confirm nothing still "
+                            "depends on it before disabling."
+                            if kind == "OpenAI"
+                            else ""
+                        )
                     ),
                     docs_url=_DOCS_URL,
                     detail="local_auth_enabled",

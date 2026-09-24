@@ -41,3 +41,33 @@ resource "azurerm_cognitive_account" "vision" {
   kind                = "ComputerVision"
   sku_name            = "S0"
 }
+# Document Intelligence, Content Safety, and Speech Services, correctly
+# secured - proves the extended kind list doesn't fire on a properly
+# configured account of any of the three.
+resource "azurerm_cognitive_account" "document_intelligence" {
+  name                           = "prod-doc-intelligence"
+  resource_group_name            = "ai-rg"
+  location                       = "eastus"
+  kind                           = "FormRecognizer"
+  sku_name                       = "S0"
+  public_network_access_enabled  = false
+  local_auth_enabled              = false
+}
+resource "azurerm_cognitive_account" "content_safety" {
+  name                           = "prod-content-safety"
+  resource_group_name            = "ai-rg"
+  location                       = "eastus"
+  kind                           = "ContentSafety"
+  sku_name                       = "S0"
+  public_network_access_enabled  = false
+  local_auth_enabled              = false
+}
+resource "azurerm_cognitive_account" "speech" {
+  name                           = "prod-speech"
+  resource_group_name            = "ai-rg"
+  location                       = "eastus"
+  kind                           = "SpeechServices"
+  sku_name                       = "S0"
+  public_network_access_enabled  = false
+  local_auth_enabled              = false
+}

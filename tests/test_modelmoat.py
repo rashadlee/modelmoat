@@ -1035,10 +1035,36 @@ def test_ecs_vectorstore_matching_is_whole_repo_path_not_substring():
 # AZR-001: Azure OpenAI network exposure                                #
 # --------------------------------------------------------------------- #
 def test_azure_openai_public_by_default_is_flagged():
-    hits = [f for f in scan(INSECURE).findings if f.check_id == "AZR-001"]
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "AZR-001" and f.resource_name == "exposed_openai"
+    ]
     assert len(hits) == 1
     assert hits[0].severity == "HIGH"
-    assert hits[0].resource_name == "exposed_openai"
+
+
+def test_azure_openai_extended_kinds_public_by_default_are_flagged():
+    # Document Intelligence (FormRecognizer), Content Safety, and Speech
+    # Services are the same resource and fields as OpenAI/AIServices - not
+    # a kind-specific carve-out.
+    hits = {
+        f.resource_name
+        for f in scan(INSECURE).findings
+        if f.check_id == "AZR-001"
+    }
+    assert {
+        "exposed_openai",
+        "exposed_document_intelligence",
+        "exposed_content_safety",
+        "exposed_speech",
+    }.issubset(hits)
+
+
+def test_azure_openai_extended_kinds_properly_secured_stay_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    for resource_name in ("document_intelligence", "content_safety", "speech"):
+        assert resource_name not in named
 
 
 def test_azure_openai_private_network_access_stays_silent():
@@ -1105,6 +1131,28 @@ def test_azure_openai_network_and_auth_findings_have_distinct_details():
     hits = [f for f in result.findings if f.resource_name == "exposed_openai"]
     assert len(hits) == 2
     assert len({f.fingerprint for f in hits}) == 2
+
+
+def test_azure_openai_studio_caveat_only_applies_to_openai_kind():
+    # The "breaks Azure OpenAI Studio" remediation caveat is specific to
+    # the OpenAI kind - stating it for Document Intelligence, Content
+    # Safety, or Speech Services would be actively wrong, since none of
+    # them have an "Azure OpenAI Studio" to break.
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "AZR-002" and f.resource_name == "exposed_document_intelligence"
+    ]
+    assert len(hits) == 1
+    assert "Azure OpenAI Studio" not in hits[0].remediation
+
+    openai_hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "AZR-002" and f.resource_name == "exposed_openai"
+    ]
+    assert len(openai_hits) == 1
+    assert "Azure OpenAI Studio" in openai_hits[0].remediation
 
 
 # --------------------------------------------------------------------- #

@@ -114,8 +114,8 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | VEC-002 | Self-hosted Weaviate accepting unauthenticated requests, via a `helm_release` value or a container environment variable | HIGH |
 | VEC-003 | Self-hosted vector databases (Qdrant, Weaviate, Milvus) publicly reachable on ECS Fargate | HIGH |
 | PIN-001 | Pinecone `OrgOwner` granted at organization scope to a service account or API key | HIGH |
-| AZR-001 | Azure OpenAI / AI Services accounts reachable from the public internet, via `public_network_access_enabled` or a missing `network_acls` deny rule | HIGH |
-| AZR-002 | Azure OpenAI / AI Services accounts allowing local (API key) authentication instead of Microsoft Entra ID only | MEDIUM |
+| AZR-001 | Azure OpenAI, AI Services, Document Intelligence, Content Safety, or Speech Services accounts reachable from the public internet, via `public_network_access_enabled` or a missing `network_acls` deny rule | HIGH |
+| AZR-002 | Azure OpenAI, AI Services, Document Intelligence, Content Safety, or Speech Services accounts allowing local (API key) authentication instead of Microsoft Entra ID only | MEDIUM |
 | AML-001 | Azure Machine Learning workspaces, compute instances, or AI Foundry hubs reachable from the public internet by default | MEDIUM |
 | BRK-001 | Bedrock AgentCore gateways with `authorizer_type = "NONE"`, so any caller can invoke every tool the gateway exposes | CRITICAL |
 | BRK-002 | Bedrock AgentCore gateways with `exception_level = "DEBUG"`, leaking internal error detail to callers | MEDIUM |
