@@ -24,6 +24,7 @@ from .pinecone import PineconeOrgRoleCheck
 from .s3 import ModelArtifactBucketCheck
 from .sagemaker import SageMakerNetworkCheck
 from .vertex_ai import VertexAIReasoningEngineCheck
+from .vertex_ai_search import VertexAISearchACLCheck
 from .weaviate import WeaviateAnonymousAccessCheck
 
 ALL_CHECKS = [
@@ -52,4 +53,5 @@ ALL_CHECKS = [
     CloudRunVertexAIPublicAccessCheck(),
     DatabricksUnityCatalogIsolationCheck(),
     CloudFunctionsVertexAIPublicAccessCheck(),
+    VertexAISearchACLCheck(),
 ]

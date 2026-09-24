@@ -1459,6 +1459,40 @@ def test_public_cloud_function_with_default_identity_stays_silent():
     assert "public_default_identity_agent" not in named
 
 
+# --------------------------------------------------------------------- #
+# VAS-001: Vertex AI Search data stores dropping source ACLs            #
+# --------------------------------------------------------------------- #
+def test_generic_data_store_no_acl_enabled_is_high():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "VAS-001" and f.resource_name == "exposed_store"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "HIGH"
+    assert hits[0].detail == "acl_enabled"
+
+
+def test_acl_enabled_true_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "acl_preserved_store" not in named
+
+
+def test_non_generic_industry_vertical_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "media_vertical_store" not in named
+
+
+def test_public_website_content_config_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "public_website_store" not in named
+
+
+def test_data_store_variable_driven_fields_stay_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "variable_store" not in named
+
+
 def test_truthy_or_absent_treats_boolean_false_as_false():
     # Regression: an earlier version fell through every branch for a
     # literal Python False and returned True, which meant an explicitly

@@ -131,6 +131,7 @@ HIGH     IAM-001  aws_iam_role_policy_attachment.full_access
 | GCP-002 | Cloud Run services granting `roles/run.invoker` to `allUsers` while running as a service account with Vertex AI access | CRITICAL |
 | DBX-003 | Unity Catalog catalogs, schemas, storage credentials, or external locations open to every workspace in the metastore by default | MEDIUM |
 | GCF-001 | Cloud Functions (2nd gen) granting `roles/cloudfunctions.invoker` to `allUsers` while running as a service account with Vertex AI access | CRITICAL |
+| VAS-001 | Vertex AI Search data stores that drop source system ACLs (Cloud Storage permissions) when importing documents for indexing | HIGH |
 
 -----
 
