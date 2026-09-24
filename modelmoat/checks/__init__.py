@@ -9,6 +9,7 @@ from .azure_openai import AzureOpenAINetworkCheck
 from .azure_openai_auth import AzureOpenAILocalAuthCheck
 from .bedrock_agentcore import BedrockAgentCoreGatewayCheck
 from .bedrock_agentcore_debug import BedrockAgentCoreDebugExceptionsCheck
+from .cloud_functions_vertex_ai import CloudFunctionsVertexAIPublicAccessCheck
 from .cloud_run_vertex_ai import CloudRunVertexAIPublicAccessCheck
 from .comprehend import ComprehendTrainingNetworkCheck
 from .databricks_cluster import DatabricksClusterIsolationCheck
@@ -50,4 +51,5 @@ ALL_CHECKS = [
     LambdaFunctionURLPublicAIAccessCheck(),
     CloudRunVertexAIPublicAccessCheck(),
     DatabricksUnityCatalogIsolationCheck(),
+    CloudFunctionsVertexAIPublicAccessCheck(),
 ]

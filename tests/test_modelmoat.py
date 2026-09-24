@@ -1429,6 +1429,36 @@ def test_public_cloud_run_with_default_identity_stays_silent():
     assert "public_default_identity_agent" not in named
 
 
+# --------------------------------------------------------------------- #
+# GCF-001: Cloud Function public invoker with Vertex AI access          #
+# --------------------------------------------------------------------- #
+def test_public_cloud_function_with_vertex_ai_role_is_critical():
+    hits = [
+        f
+        for f in scan(INSECURE).findings
+        if f.check_id == "GCF-001" and f.resource_name == "public_agent"
+    ]
+    assert len(hits) == 1
+    assert hits[0].severity == "CRITICAL"
+
+
+def test_authenticated_cloud_function_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "private_agent" not in named
+
+
+def test_public_cloud_function_with_no_vertex_ai_grant_stays_silent():
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "public_no_vertex_agent" not in named
+
+
+def test_public_cloud_function_with_default_identity_stays_silent():
+    # service_account_email omitted falls back to the project's default
+    # compute service account, whose grants this check cannot see.
+    named = {f.resource_name for f in scan(SECURE).findings}
+    assert "public_default_identity_agent" not in named
+
+
 def test_truthy_or_absent_treats_boolean_false_as_false():
     # Regression: an earlier version fell through every branch for a
     # literal Python False and returned True, which meant an explicitly
