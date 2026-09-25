@@ -2,6 +2,41 @@
 
 Notable changes to modelmoat. Versions follow [semantic versioning](https://semver.org).
 
+## 0.7.0 - 2026-09-21
+
+### Added
+
+- DBX-003 flags four Unity Catalog securable objects -
+  `databricks_catalog`, `databricks_schema`, `databricks_storage_credential`,
+  `databricks_external_location` - whose `isolation_mode` defaults to
+  `"ISOLATION_MODE_OPEN"`, making them accessible from every workspace
+  attached to the metastore. MEDIUM: reaching data through an OPEN object
+  still requires an explicit Unity Catalog GRANT regardless of this
+  setting.
+- GCF-001 flags a `google_cloudfunctions2_function` granting
+  `roles/cloudfunctions.invoker` to `allUsers` while running as a service
+  account with a Vertex AI role - a distinct resource from GCP-002's Cloud
+  Run check, with its own IAM member resource GCP-002's correlation logic
+  cannot match. CRITICAL: Google requires authentication credentials by
+  default, and granting the invoker role to allUsers removes that
+  requirement entirely.
+- VAS-001 flags a `google_discovery_engine_data_store` (Vertex AI Search)
+  with `acl_enabled` absent or false, which drops source-system
+  permissions (for example Cloud Storage ACLs) when documents are
+  imported for indexing. HIGH, scoped to where Google's own documented
+  caution applies: `industry_vertical = "GENERIC"` and
+  `content_config != "PUBLIC_WEBSITE"`.
+- AZR-001 and AZR-002 now also cover `azurerm_cognitive_account` accounts
+  of kind `FormRecognizer` (Document Intelligence), `ContentSafety`, and
+  `SpeechServices`, not just `OpenAI`/`AIServices` - confirmed to be the
+  identical resource, fields, and documented defaults, not a kind-specific
+  carve-out.
+- DBX-004 flags a publicly reachable Databricks workspace with no
+  `databricks_ip_access_list` resource anywhere in the project granting
+  `ALLOW` access. LOW: a documented, off-by-default control per
+  Microsoft's own Azure security baseline for Databricks, distinct from
+  DBX-001's own reachability finding on the same resource.
+
 ## 0.6.0 - 2026-09-20
 
 ### Added
